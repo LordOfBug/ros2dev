@@ -11,10 +11,33 @@ RUN apt-get update && apt-get install -y \
     wget \
     curl \
     nano \
+    vim \
+    emacs \
     build-essential \
     ros-humble-xacro \
+    ros-humble-foxglove-bridge \
+    ros-humble-robot-state-publisher \
+    ros-humble-joint-state-publisher \
     ros-humble-joint-state-publisher-gui \
-    ros-humble-foxglove-bridge
+    ros-humble-gazebo-ros-pkgs \
+    ros-humble-gazebo-plugins \
+    ros-humble-teleop-twist-keyboard \
+    ros-humble-teleop-twist-joy \
+    ros-humble-joy \
+    ros-humble-ros2-control \
+    ros-humble-ros2-controllers \
+    ros-humble-gazebo-ros2-control \
+    ros-humble-ackermann-msgs \
+    ros-humble-navigation2 \
+    ros-humble-nav2-bringup \
+    ros-humble-slam-toolbox \
+    ros-humble-sensor-msgs \
+
+# 1.1 Install OpenCode Desktop (Linux version)
+RUN curl -fsSL -o /tmp/opencode.deb https://opencode.ai/download/stable/linux-x64-deb \
+    && apt-get update \
+    && apt-get install -y /tmp/opencode.deb \
+    && rm /tmp/opencode.deb
 
 # 2. Install XFCE desktop environment and XRDP
 RUN apt-get install -y \
