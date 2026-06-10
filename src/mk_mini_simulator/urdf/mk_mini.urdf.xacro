@@ -79,9 +79,8 @@
                     <ros>
                         <remapping>~/out:=/simulation/sonar_${prefix}</remapping>
                     </ros>
-                    <output_type>sensor_msgs/Range</output_type>
+		    <output_type>sensor_msgs/LaserScan</output_type>
                     <frame_name>sonar_${prefix}</frame_name>
-                    <radiation_type>ultrasound</radiation_type>
 		</plugin>
             </sensor>
         </gazebo>
