@@ -1,0 +1,99 @@
+<?xml version="1.0"?>
+<robot name="mk_mini" xmlns:xacro="http://ros.org/wiki/xacro">
+
+    <xacro:property name="PI" value="3.1415926535897931"/>
+    
+    <xacro:property name="chassis_length" value="0.84"/>
+    <xacro:property name="chassis_width" value="0.60"/>
+    <xacro:property name="chassis_height" value="0.31"/>
+    <xacro:property name="ground_clearance" value="0.111"/>
+
+    <xacro:property name="wheel_radius" value="0.12"/>
+    <xacro:property name="wheel_width" value="0.08"/> 
+    <xacro:property name="wheelbase" value="0.60"/>
+    <xacro:property name="track_width" value="0.517"/>
+
+    <link name="base_footprint"/>
+
+    <link name="base_link">
+        <visual>
+            <geometry>
+                <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+            </geometry>
+            <material name="translucent_white">
+                <color rgba="0.9 0.9 0.9 0.4"/>
+            </material>
+        </visual>
+    </link>
+
+    <joint name="base_joint" type="fixed">
+        <parent link="base_footprint"/>
+        <child link="base_link"/>
+        <origin xyz="0 0 ${ground_clearance + (chassis_height/2.0)}" rpy="0 0 0"/>
+    </joint>
+
+    <xacro:macro name="rear_wheel" params="prefix y_reflect">
+        <link name="${prefix}_rear_wheel">
+            <visual>
+                <geometry>
+                    <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+                </geometry>
+                <material name="black">
+                    <color rgba="0.1 0.1 0.1 1.0"/>
+                </material>
+            </visual>
+        </link>
+
+        <joint name="${prefix}_rear_wheel_joint" type="continuous">
+            <parent link="base_link"/>
+            <child link="${prefix}_rear_wheel"/>
+            <origin xyz="${-wheelbase/2.0} ${y_reflect * (track_width/2.0 + 0.06)} ${-chassis_height/2.0 + (wheel_radius - ground_clearance)}" rpy="${PI/2} 0 0"/>
+            <axis xyz="0 0 -1"/>
+        </joint>
+    </xacro:macro>
+
+    <xacro:macro name="front_wheel_steering" params="prefix y_reflect">
+        <link name="${prefix}_steering_knuckle">
+            <visual>
+                <geometry>
+                    <box size="0.06 0.06 0.06"/>
+                </geometry>
+                <material name="grey">
+                    <color rgba="0.5 0.5 0.5 1.0"/>
+                </material>
+            </visual>
+        </link>
+
+        <joint name="${prefix}_steering_joint" type="revolute">
+            <parent link="base_link"/>
+            <child link="${prefix}_steering_knuckle"/>
+            <origin xyz="${wheelbase/2.0} ${y_reflect * track_width/2.0} ${-chassis_height/2.0 + (wheel_radius - ground_clearance)}" rpy="0 0 0"/>
+            <axis xyz="0 0 1"/>
+            <limit lower="-0.6" upper="0.6" effort="10.0" velocity="1.0"/>
+        </joint>
+
+        <link name="${prefix}_front_wheel">
+            <visual>
+                <geometry>
+                    <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+                </geometry>
+                <material name="black_wheels">
+                    <color rgba="0.1 0.1 0.1 1.0"/>
+                </material>
+            </visual>
+        </link>
+
+        <joint name="${prefix}_front_wheel_joint" type="continuous">
+            <parent link="${prefix}_steering_knuckle"/>
+            <child link="${prefix}_front_wheel"/>
+            <origin xyz="0 ${y_reflect * 0.06} 0" rpy="${PI/2} 0 0"/>
+            <axis xyz="0 0 -1"/>
+        </joint>
+    </xacro:macro>
+
+    <xacro:rear_wheel prefix="left" y_reflect="1"/>
+    <xacro:rear_wheel prefix="right" y_reflect="-1"/>
+    <xacro:front_wheel_steering prefix="left" y_reflect="1"/>
+    <xacro:front_wheel_steering prefix="right" y_reflect="-1"/>
+
+</robot>
