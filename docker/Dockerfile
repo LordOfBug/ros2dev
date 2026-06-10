@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y \
     ros-humble-navigation2 \
     ros-humble-nav2-bringup \
     ros-humble-slam-toolbox \
-    ros-humble-sensor-msgs \
+    ros-humble-sensor-msgs
 
 # 1.1 Install OpenCode Desktop (Linux version)
 RUN curl -fsSL -o /tmp/opencode.deb https://opencode.ai/download/stable/linux-x64-deb \

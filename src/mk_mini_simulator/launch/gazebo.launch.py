@@ -25,10 +25,16 @@ def generate_launch_description():
 
     # 3. Include the standard Gazebo launch file from the gazebo_ros package
     gazebo_ros_pkg = get_package_share_directory('gazebo_ros')
+    
+    # Define exactly which world to load (e.g., gazebo_ros_range.world)
+    world_path = os.path.join(gazebo_ros_pkg, 'worlds', 'gazebo_ros_range.world')
+    
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(gazebo_ros_pkg, 'launch', 'gazebo.launch.py')
-        )
+        ),
+        # Pass the world path as an argument to Gazebo
+        launch_arguments={'world': world_path}.items()        
     )
 
     # 4. Spawn the robot into the Gazebo physics engine
