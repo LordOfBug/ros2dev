@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="r550_robot">
 
-    <!-- 1. 物理参数定义（小车的长宽高和轮子大小） -->
+    <!-- 1. 物理参数定义 -->
     <xacro:property name="base_length" value="0.30"/>
     <xacro:property name="base_width" value="0.20"/>
     <xacro:property name="base_height" value="0.10"/>
@@ -11,7 +11,7 @@
     <xacro:property name="wheel_xoff" value="0.10"/>
     <xacro:property name="wheel_zoff" value="0.02"/>
 
-    <!-- 2. 惯性矩阵宏定义（物理引擎计算重力和惯性需要它） -->
+    <!-- 2. 惯性矩阵宏定义 -->
     <xacro:macro name="inertial_box" params="mass x y z">
         <inertial>
             <mass value="${mass}"/>
@@ -24,9 +24,10 @@
     <xacro:macro name="inertial_cylinder" params="mass radius length">
         <inertial>
             <mass value="${mass}"/>
+            <!-- 将圆柱体旋转惯性轴完美对齐到 Y 轴（滚轮方向） -->
             <inertia ixx="${(1/12)*mass*(3*radius*radius + length*length)}" ixy="0.0" ixz="0.0"
-                     iyy="${(1/12)*mass*(3*radius*radius + length*length)}" iyz="0.0"
-                     izz="${(1/2)*mass*radius*radius}"/>
+                     iyy="${(1/2)*mass*radius*radius}" iyz="0.0"
+                     izz="${(1/12)*mass*(3*radius*radius + length*length)}"/>
         </inertial>
     </xacro:macro>
 
@@ -36,7 +37,8 @@
     <joint name="base_joint" type="fixed">
         <parent link="base_footprint"/>
         <child link="base_link"/>
-        <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+        <!-- 【Bug 修复】：将减法改为加法（0.04 + 0.02 = 0.06m），将车身底板抬高到 6cm，彻底避免地盘蹭地死锁 -->
+        <origin xyz="0 0 ${wheel_radius + wheel_zoff}" rpy="0 0 0"/>
     </joint>
 
     <!-- 4. 车身底盘（Chassis Link） -->
@@ -63,7 +65,7 @@
         <material>Gazebo/Grey</material>
     </gazebo>
 
-    <!-- 5. 轮子宏定义（用这套规则画出4个车轮） -->
+    <!-- 5. 轮子宏定义 -->
     <xacro:macro name="wheel" params="prefix x_reflect y_reflect">
         <link name="${prefix}_wheel">
             <visual>
@@ -87,7 +89,8 @@
         <joint name="${prefix}_wheel_joint" type="continuous">
             <parent link="base_link"/>
             <child link="${prefix}_wheel"/>
-            <origin xyz="${x_reflect*wheel_xoff} ${y_reflect*(base_width/2 + wheel_ygap)} ${wheel_zoff}" rpy="0 0 0"/>
+            <!-- 【Bug 修复】：将 Z 轴偏置设为负值（-wheel_zoff），轮子中心位于底盘下方 2cm 处，完美贴地 -->
+            <origin xyz="${x_reflect*wheel_xoff} ${y_reflect*(base_width/2 + wheel_width/2 + wheel_ygap)} ${-wheel_zoff}" rpy="0 0 0"/>
             <axis xyz="0 1 0"/>
         </joint>
 
@@ -131,7 +134,7 @@
         <origin xyz="0.08 0 ${base_height + 0.02}" rpy="0 0 0"/>
     </joint>
 
-    <!-- 7. Gazebo 激光雷达传感器插件（把虚拟光线变成 ROS 2 的 /scan 数据） -->
+    <!-- 7. Gazebo 激光雷达传感器插件 -->
     <gazebo reference="laser_link">
         <material>Gazebo/Blue</material>
         <sensor name="lidar" type="ray">
@@ -187,9 +190,9 @@
             <right_joint>front_right_wheel_joint</right_joint>
             <right_joint>back_right_wheel_joint</right_joint>
             
-            <!-- 轮距和轮子尺寸（轮距 0.22 米，轮子直径 0.08 米） -->
-            <wheel_separation>0.22</wheel_separation>
-            <wheel_separation>0.22</wheel_separation>
+            <!-- 【参数修正】：轮距在 URDF 中实际计算为 0.26 米，我们将控制器轮距同步更新，行驶更精准 -->
+            <wheel_separation>0.26</wheel_separation>
+            <wheel_separation>0.26</wheel_separation>
             <wheel_diameter>0.08</wheel_diameter>
             
             <!-- 物理限制 -->
