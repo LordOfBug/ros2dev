@@ -10,8 +10,11 @@
     <!-- 【物理优化】：稍微加宽轮距 gap，给车轮和底盘预留更美观、更安全的空间 -->
     <xacro:property name="wheel_ygap" value="0.02"/>
     <xacro:property name="wheel_xoff" value="0.10"/>
-    <!-- 【终极 Bug 修复】：将偏置设为 4cm（等于轮子半径），使车轮顶端与车身底盘底面实现 100% 物理切合，彻底消除重叠 -->
+    <!-- 【高度对齐】：轴心向下偏移量 -->
     <xacro:property name="wheel_zoff" value="0.04"/>
+
+    <!-- 【计算优化】：预先计算出轮子在 Y 轴方向的绝对偏移量，完全杜绝 Xacro 解析负数相乘的 Bug -->
+    <xacro:property name="wheel_yoff" value="${base_width/2 + wheel_width/2 + wheel_ygap}"/>
 
     <!-- 2. 惯性矩阵宏定义 -->
     <xacro:macro name="inertial_box" params="mass x y z">
@@ -25,12 +28,12 @@
 
     <xacro:macro name="inertial_cylinder" params="mass radius length">
         <inertial>
-            <!-- 惯性参考系方向与物理/视觉方向保持完全一致，确保物理计算极度稳定 -->
-            <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+            <!-- 移除了不稳定的旋转惯性参考系，直接在 Link 本地坐标系下进行惯性描述，物理运算极度稳定 -->
+            <origin xyz="0 0 0" rpy="0 0 0"/>
             <mass value="${mass}"/>
             <inertia ixx="${(1/12)*mass*(3*radius*radius + length*length)}" ixy="0.0" ixz="0.0"
-                     iyy="${(1/12)*mass*(3*radius*radius + length*length)}" iyz="0.0"
-                     izz="${(1/2)*mass*radius*radius}"/>
+                     iyy="${(1/2)*mass*radius*radius}" iyz="0.0"
+                     izz="${(1/12)*mass*(3*radius*radius + length*length)}"/>
         </inertial>
     </xacro:macro>
 
@@ -40,7 +43,7 @@
     <joint name="base_joint" type="fixed">
         <parent link="base_footprint"/>
         <child link="base_link"/>
-        <!-- 【高度对齐】：小车底盘离地高度 = 轮子半径 4cm + 偏置 4cm = 8cm，完美越野高度 -->
+        <!-- 小车底盘离地高度 = 轮子半径 4cm + 轴心偏置 4cm = 8cm，完美越野高度 -->
         <origin xyz="0 0 ${wheel_radius + wheel_zoff}" rpy="0 0 0"/>
     </joint>
 
@@ -58,7 +61,7 @@
         <collision>
             <origin xyz="0 0 ${base_height/2}"/>
             <geometry>
-                <!-- 【物理安全通道】：使底盘碰撞箱在 Y轴（宽度）方向收缩 2cm (0.18m)，彻底隔绝与车轮的任何摩擦，消除穿模死锁 -->
+                <!-- 【物理安全通道】：使底盘碰撞箱在 Y轴方向收缩，彻底隔绝与车轮的任何摩擦，消除穿模死锁 -->
                 <box size="${base_length - 0.02} ${base_width - 0.02} ${base_height - 0.02}"/>
             </geometry>
         </collision>
@@ -70,7 +73,7 @@
     </gazebo>
 
     <!-- 5. 轮子宏定义 -->
-    <xacro:macro name="wheel" params="prefix x_reflect y_reflect">
+    <xacro:macro name="wheel" params="prefix x_offset y_offset">
         <link name="${prefix}_wheel">
             <visual>
                 <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
@@ -93,8 +96,8 @@
         <joint name="${prefix}_wheel_joint" type="continuous">
             <parent link="base_link"/>
             <child link="${prefix}_wheel"/>
-            <!-- 轮子安装轴点完美设在 -wheel_zoff (-4cm) 处，车轮与底盘底面处于完美的相切悬挂状态 -->
-            <origin xyz="${x_reflect*wheel_xoff} ${y_reflect*(base_width/2 + wheel_width/2 + wheel_ygap)} ${-wheel_zoff}" rpy="0 0 0"/>
+            <!-- 轮子安装轴点通过传入的 x_offset 和 y_offset 显式定位，完全杜绝 Xacro 负数乘积失效的问题 -->
+            <origin xyz="${x_offset} ${y_offset} ${-1 * wheel_zoff}" rpy="0 0 0"/>
             <axis xyz="0 1 0"/>
         </joint>
 
@@ -105,11 +108,11 @@
         </gazebo>
     </xacro:macro>
 
-    <!-- 实例化4个轮子 -->
-    <xacro:wheel prefix="front_left" x_reflect="1" y_reflect="1"/>
-    <xacro:wheel prefix="front_right" x_reflect="1" y_reflect="-1"/>
-    <xacro:wheel prefix="back_left" x_reflect="-1" y_reflect="1"/>
-    <xacro:wheel prefix="back_right" x_reflect="-1" y_reflect="-1"/>
+    <!-- 实例化4个轮子：通过显式数学表达式传递绝对坐标，确保四驱绝对对称 -->
+    <xacro:wheel prefix="front_left"  x_offset="${wheel_xoff}"      y_offset="${wheel_yoff}"/>
+    <xacro:wheel prefix="front_right" x_offset="${wheel_xoff}"      y_offset="${-1 * wheel_yoff}"/>
+    <xacro:wheel prefix="back_left"   x_offset="${-1 * wheel_xoff}" y_offset="${wheel_yoff}"/>
+    <xacro:wheel prefix="back_right"  x_offset="${-1 * wheel_xoff}" y_offset="${-1 * wheel_yoff}"/>
 
     <!-- 6. 激光雷达（LiDAR）部分 -->
     <link name="laser_link">
@@ -194,7 +197,7 @@
             <right_joint>front_right_wheel_joint</right_joint>
             <right_joint>back_right_wheel_joint</right_joint>
             
-            <!-- 【参数修正】：轮距在 URDF 中实际计算为 0.28 米 (ygap增加后)，我们将控制器轮距同步更新，行驶更精准 -->
+            <!-- 轮距在 URDF 中实际计算为 0.28 米，我们将控制器轮距同步更新，行驶更精准 -->
             <wheel_separation>0.28</wheel_separation>
             <wheel_separation>0.28</wheel_separation>
             
