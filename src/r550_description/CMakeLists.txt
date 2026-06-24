@@ -15,5 +15,14 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
+# =========================================================================
+# 【核心新增】：将 scripts 目录下的 Python 节点安装到系统的 lib/r550_description 中
+# 只有添加了这一步，colcon build 才会将脚本拷贝到 install 空间，ros2 run 才能成功识别它！
+# =========================================================================
+install(
+  PROGRAMS scripts/foxglove_spawner.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # 声明这是一个标准的 ROS 2 宏包
 ament_package()
