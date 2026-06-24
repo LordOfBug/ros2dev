@@ -1,5 +1,5 @@
 # R550 机器人 Nav2 Humble 核心导航参数配置文件
-# 采用无图导航模式 (Mapless Navigation) —— 将 odom 设为全局和局部参考系，移除静态地图依赖
+# SLAM 模式 —— 全局坐标系使用 map (由 slam_toolbox 提供)，局部坐标系使用 odom
 
 amcl:
   ros__parameters:
@@ -8,7 +8,7 @@ amcl:
 bt_navigator:
   ros__parameters:
     use_sim_time: True
-    global_frame: odom          # 无图导航，全局参考系设为 odom
+    global_frame: map              # SLAM 模式：全局参考系使用 map (由 slam_toolbox 提供)
     robot_base_frame: base_footprint
     odom_topic: odom
     enable_groot_monitoring: True
@@ -151,7 +151,7 @@ behavior_server:
   ros__parameters:
     use_sim_time: True
     local_frame: odom
-    global_frame: odom
+    global_frame: map
     robot_base_frame: base_footprint
     behavior_plugins: ["spin", "backup", "wait"]
     spin:
@@ -186,17 +186,16 @@ global_costmap:
     ros__parameters:
       update_frequency: 1.0
       publish_frequency: 1.0
-      global_frame: odom
+      global_frame: map              # SLAM 模式：全局代价地图使用 map 坐标系
       robot_base_frame: base_footprint
       use_sim_time: True
       robot_radius: 0.18
       resolution: 0.05
       
-      # 显示声明代价地图尺寸范围，解决无图模式下 0 x 0 米死锁问题
-      width: 40
-      height: 40
-      origin_x: -20.0
-      origin_y: -20.0
+      # SLAM 模式下使用滚动窗口，跟随机器人位置移动，不再需要固定原点
+      rolling_window: true
+      width: 100
+      height: 100
       
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
