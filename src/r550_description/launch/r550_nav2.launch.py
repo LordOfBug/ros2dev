@@ -39,8 +39,7 @@ def generate_launch_description():
         launch_arguments={
             'use_sim_time': LaunchConfiguration('use_sim_time'),
             'params_file': LaunchConfiguration('params_file'),
-            'use_lifecycle_mgr': 'true',
-            'map_subscribe_transient_local': 'true'
+            'use_lifecycle_mgr': 'true'
         }.items()
     )
 

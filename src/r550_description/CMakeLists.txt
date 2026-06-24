@@ -11,7 +11,7 @@ find_package(ament_cmake REQUIRED)
 
 # 核心：将我们的 3D 模型(urdf)和启动脚本(launch)安装到系统共享路径中
 install(
-  DIRECTORY urdf launch
+  DIRECTORY urdf launch config
   DESTINATION share/${PROJECT_NAME}
 )
 
