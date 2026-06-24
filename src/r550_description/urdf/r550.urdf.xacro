@@ -28,9 +28,7 @@
         <inertial>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <mass value="${mass}"/>
-            <!-- 【核心修复 1 - 物理稳定化】：人工注入高稳定性惯性数值！
-                 原本轮子太轻导致惯性计算值只有 0.0005，在 Gazebo 中会引发数值溢出爆炸。
-                 这里人工设置稳定的 0.001/0.002 惯量，确保物理求解器稳如磐石，轮子绝对不会再飞走！ -->
+            <!-- 【物理稳定化】：人工注入高稳定性惯性数值，确保物理求解器稳如磐石 -->
             <inertia ixx="0.001" ixy="0.0" ixz="0.0"
                      iyy="0.002" iyz="0.0"
                      izz="0.001"/>
@@ -97,13 +95,23 @@
             <!-- 极简无冲突坐标拼接，彻底消灭乘法 Bug -->
             <origin xyz="${x_reflect * wheel_xoff} ${y_reflect * wheel_yoff} ${-wheel_zoff}" rpy="0 0 0"/>
             <axis xyz="0 1 0"/>
-            <dynamics damping="0.1" friction="0.1"/>
+            <!-- 【接触力学优化 1】：将关节阻尼和摩擦力设为极低值 0.001，给小车轴承涂上完美的虚拟润滑油 -->
+            <dynamics damping="0.001" friction="0.001"/>
         </joint>
 
         <gazebo reference="${prefix}_wheel">
             <material>Gazebo/Black</material>
-            <mu1>1.0</mu1>
-            <mu2>1.0</mu2>
+            <!-- 【接触力学优化 2】：
+                 - mu1/mu2 改为 0.5：降低滑移转向的侧向死锁阻力，让小车能够丝滑原地自转。
+                 - kp (stiffness) 设为 1e6：提供强大的支撑刚度，防止轮子微观陷入地下。
+                 - kd (damping) 设为 100：吸收地面接触震动。
+                 - minDepth 设为 0.001：允许 1 毫米的计算穿透容差，彻底消除 ODE 碰撞求解器导致的关节物理锁死。 -->
+            <mu1>0.5</mu1>
+            <mu2>0.5</mu2>
+            <kp>1000000.0</kp>
+            <kd>100.0</kd>
+            <minDepth>0.001</minDepth>
+            <maxVel>0.1</maxVel>
         </gazebo>
     </xacro:macro>
 
@@ -200,11 +208,9 @@
             <wheel_diameter>0.08</wheel_diameter>
             <wheel_diameter>0.08</wheel_diameter>
             
-            <!-- 【核心修复 2 - 扭矩柔和化】：将轮子最大扭矩降低到 2.0 N·m。
-                 原先的 10.0/20.0 扭矩对轻量化车轮来说无异于航天火箭引擎，会导致物理关节瞬间撕裂。
-                 改成 2.0 后不仅能稳健拖动 5kg 小车，而且物理引擎运算极为柔和，绝不发生振荡和弹飞！ -->
-            <max_wheel_torque>2.0</max_wheel_torque>
-            <max_wheel_acceleration>1.0</max_wheel_acceleration>
+            <!-- 【接触力学优化 3】：将每个车轮的最大动力扭矩提升至强劲的 20.0 N·m，瞬间释放电机马力，绝不卡死 -->
+            <max_wheel_torque>20.0</max_wheel_torque>
+            <max_wheel_acceleration>2.0</max_wheel_acceleration>
             
             <publish_odom>true</publish_odom>
             <publish_odom_tf>true</publish_odom_tf>
