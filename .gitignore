@@ -1,0 +1,9 @@
+# Python bytecode cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Colcon build artifacts
+build/
+install/
+log/
