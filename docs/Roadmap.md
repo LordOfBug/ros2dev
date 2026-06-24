@@ -1,0 +1,404 @@
+# R550 Development Roadmap — From Simulation to Production Intelligence
+
+> This document serves as a cross-reference guide for all future R550 development work. It maps out the 5 layers of robot development, the skills required at each level, and — critically — where LLM intelligence can be integrated at every layer to make the R550 a truly intelligent autonomous platform.
+
+---
+
+## The 5 Layers of Robot Development
+
+```mermaid
+graph TB
+    subgraph L5["🔴🔴 Layer 5: Production Reliability"]
+        P5["24/7 uptime, fleet management,<br/>remote monitoring, OTA updates"]
+    end
+    subgraph L4["🔴 Layer 4: Application Logic"]
+        P4["Custom behaviors, task planning,<br/>multi-robot coordination, safety"]
+    end
+    subgraph L3["🟠 Layer 3: Perception & Sensor Fusion"]
+        P3["Object recognition, EKF tuning,<br/>dynamic obstacles, sensor edge cases"]
+    end
+    subgraph L2["🟡 Layer 2: Sim-to-Real Transfer"]
+        P2["Hardware drivers, calibration,<br/>timing, real-world physics"]
+    end
+    subgraph L1["🟢 Layer 1: Simulation Integration"]
+        P1["URDF, Nav2 plugins, config tuning,<br/>Gazebo simulation"]
+    end
+
+    L1 --> L2 --> L3 --> L4 --> L5
+
+    style L1 fill:#2d6a2d,color:#fff
+    style L2 fill:#8a7a00,color:#fff
+    style L3 fill:#b35900,color:#fff
+    style L4 fill:#8b0000,color:#fff
+    style L5 fill:#4a0000,color:#fff
+```
+
+---
+
+## Layer 1: 🟢 Simulation Integration
+
+**Status: ✅ Current R550 state**
+
+### What It Is
+Assembling existing ROS 2 components — URDF models, Gazebo plugins, Nav2 configuration — into a working simulated robot. This is the "plugin + glue" layer.
+
+### What You've Done
+- Built R550 URDF with 4WD skid-steer, LiDAR, and tuned Gazebo physics
+- Configured Nav2 for mapless odom-based navigation (A* planner + DWB controller)
+- Set up Docker container with XFCE + Foxglove Bridge for remote visualization
+
+### Core Skills
+
+| Skill | Description | R550 Example |
+|-------|-------------|-------------|
+| URDF/Xacro | Robot 3D model description | `r550.urdf.xacro` — chassis, wheels, LiDAR |
+| Launch files | Multi-node orchestration | `r550_sim.launch.py`, `r550_nav2.launch.py` |
+| ROS 2 ecosystem | Knowing which packages exist and what they do | Choosing Nav2, Gazebo, Foxglove |
+| Parameter tuning | YAML config for algorithm behavior | `nav2_params.yaml` — DWB critics, costmap layers |
+| TF tree design | Coordinate frame hierarchy | `odom → base_footprint → base_link → laser_link` |
+
+### Hard Parts at This Layer
+- Understanding the TF tree (it's invisible and errors are cryptic)
+- Getting Gazebo physics stable (inertia, friction, contact parameters)
+- Knowing which plugin to choose when 5 alternatives exist
+
+### 🤖 LLM Integration Opportunities
+
+| Opportunity | How It Works | Difficulty |
+|-------------|-------------|-----------|
+| **Config generation** | "Generate Nav2 params for a 30cm wide skid-steer robot with 12m LiDAR" → LLM produces `nav2_params.yaml` with correct values | Low |
+| **URDF debugging** | Feed TF tree errors to LLM → it identifies missing joints or frame mismatches | Low |
+| **Plugin recommendation** | "My robot needs to follow smooth curves" → LLM recommends Regulated Pure Pursuit over DWB with rationale | Low |
+| **Parameter tuning advisor** | Robot oscillates during nav → feed logs to LLM → it suggests adjusting DWB critic weights | Medium |
+
+---
+
+## Layer 2: 🟡 Sim-to-Real Transfer
+
+**Status: 🔜 Next milestone for R550**
+
+### What It Is
+Making the simulated robot work on real hardware. This is where the gap between "perfect simulation" and "messy reality" becomes painfully obvious.
+
+### What Changes
+
+| In Simulation | In Reality |
+|--------------|-----------|
+| Perfect odometry | Wheel slip, gear backlash, encoder noise |
+| Clean LiDAR data | Glass reflections, sunlight interference, dust |
+| Instant communication | USB latency (10-50ms), WiFi drops |
+| Flat uniform floor | Carpet seams, thresholds, ramps, wet spots |
+| Perfect motor response | Current limits, thermal throttling, dead zones |
+| Unlimited compute | Onboard CPU thermal throttling under load |
+
+### Core Skills
+
+| Skill | Description | R550 Task |
+|-------|-------------|----------|
+| Hardware drivers | Communicating with physical sensors/motors | Writing ROS 2 nodes for Wheeltec motor controller |
+| Calibration | Measuring real physical parameters | Actual wheel diameter, LiDAR mounting offset |
+| PID tuning | Closed-loop motor control | Tuning velocity PID so `cmd_vel: 0.3` actually produces 0.3 m/s |
+| Timing analysis | Ensuring real-time message flow | Profiling sensor → costmap → controller pipeline latency |
+| Diagnostic tooling | Understanding what's wrong on a headless robot | `ros2 topic hz`, `ros2 doctor`, log analysis |
+
+### Hard Parts at This Layer
+- **No visual debugging** — can't open Gazebo on the real robot, must rely on topic introspection
+- **Non-reproducible bugs** — hardware issues are intermittent (works 99 times, fails once)
+- **Cascading failures** — one bad sensor reading propagates through the entire nav stack
+- **Physical danger** — a software bug can damage the robot or hurt someone
+
+### 🤖 LLM Integration Opportunities
+
+| Opportunity | How It Works | Difficulty |
+|-------------|-------------|-----------|
+| **Log analysis & diagnosis** | Feed ROS 2 logs, TF warnings, topic rates to LLM → "Your LiDAR is publishing at 4Hz instead of 10Hz, likely a USB bandwidth issue" | Low |
+| **Calibration assistant** | "My robot always curves left when told to go straight" → LLM suggests wheel diameter mismatch or IMU calibration steps | Medium |
+| **Parameter auto-tuning** | LLM runs the robot with different PID gains, observes velocity tracking error, iterates toward optimal values | High |
+| **Digital twin sync** | LLM compares sim vs. real behavior logs, identifies which sim parameters need adjustment to match reality | High |
+
+---
+
+## Layer 3: 🟠 Perception & Sensor Fusion
+
+**Status: 📋 Planned (Bluetooth anchors are first step)**
+
+### What It Is
+Making the robot understand its environment beyond simple obstacle detection. Fusing multiple sensor sources into a coherent, trustworthy world model.
+
+### What You'll Build
+
+```mermaid
+graph LR
+    subgraph SENSORS["Raw Sensors"]
+        LiDAR["🔵 LiDAR<br/>Obstacles"]
+        BLE["📶 BT Anchors<br/>Position"]
+        Camera["📷 Camera<br/>(future)"]
+        IMU["🧭 IMU<br/>Orientation"]
+    end
+
+    subgraph FUSION["Fusion Layer"]
+        EKF["Extended<br/>Kalman Filter"]
+        CostmapFilter["Costmap<br/>Filters"]
+        ObjectDet["Object<br/>Detection"]
+    end
+
+    subgraph WORLD_MODEL["World Understanding"]
+        Pos["Corrected<br/>Position"]
+        Obstacles["Classified<br/>Obstacles"]
+        SemanticMap["Semantic<br/>Map"]
+    end
+
+    LiDAR --> CostmapFilter
+    LiDAR --> ObjectDet
+    BLE --> EKF
+    IMU --> EKF
+    Camera --> ObjectDet
+    EKF --> Pos
+    CostmapFilter --> Obstacles
+    ObjectDet --> SemanticMap
+```
+
+### Core Skills
+
+| Skill | Description | R550 Task |
+|-------|-------------|----------|
+| Kalman filters | Fusing noisy sensor data optimally | EKF for wheels + Bluetooth anchors + IMU |
+| Computer vision | Extracting info from camera images | Object detection, SLAM with visual features |
+| Point cloud processing | Understanding 3D sensor data | Filtering LiDAR noise, ground plane removal |
+| SLAM | Building maps while navigating | `slam_toolbox` for persistent map building |
+| Coordinate math | Transforms, rotations, projections | Camera-to-robot frame transforms |
+
+### Hard Parts at This Layer
+- **Sensor trust:** When the LiDAR says "obstacle" but the camera sees nothing — who's right?
+- **Edge cases:** Glass walls (invisible to LiDAR), mirrors (create phantom obstacles), black matte surfaces (absorb LiDAR), small cables on the floor (below scan plane)
+- **Dynamic environments:** People walking, doors opening/closing — the costmap must update fast enough
+- **BLE multipath:** Bluetooth signals bounce off walls, creating position "jumps." Your EKF covariance tuning must handle this
+
+### 🤖 LLM Integration Opportunities
+
+| Opportunity | How It Works | Difficulty |
+|-------------|-------------|-----------|
+| **Scene understanding** | Camera feed → Vision-Language Model → "There is a person with a cart blocking the hallway, they appear to be loading boxes" | Medium |
+| **Anomaly detection** | LLM monitors sensor health: "LiDAR point density dropped 60% — possible dust on lens or sensor degradation" | Medium |
+| **Semantic costmap annotations** | LLM + camera labels zones: "this area is a doorway" (slow down), "this is a charging station" (goal point), "this is a staircase" (forbidden zone) | High |
+| **Sensor fusion arbitration** | When sensors disagree, LLM uses context: "BLE says position jumped 3m in 0.1s — impossible, this is multipath noise, increase BLE covariance temporarily" | High |
+| **Dynamic obstacle prediction** | LLM observes: "Person has been walking left-to-right at 1.2 m/s for 3 seconds" → predicts trajectory → pre-emptively adjusts path | High |
+
+---
+
+## Layer 4: 🔴 Application Logic
+
+**Status: 📋 Future — the LLM mission planner is a first step**
+
+### What It Is
+Making the robot do useful work beyond "go to (x, y)." This layer is where you write the most custom code — it's business logic for robots.
+
+### Example Capabilities
+
+```mermaid
+graph TD
+    subgraph MISSIONS["Mission Types"]
+        Delivery["📦 Delivery<br/>Pick up from A,<br/>deliver to B"]
+        Patrol["🔍 Patrol<br/>Regular inspection<br/>route with reporting"]
+        Guide["🧑‍🤝‍🧑 Guide<br/>Lead humans to<br/>destination"]
+        Fetch["🔧 Fetch<br/>Retrieve specific<br/>item and return"]
+    end
+
+    subgraph CAPABILITIES["Required Capabilities"]
+        TaskDecomp["Task Decomposition"]
+        StateManagement["State Machines"]
+        HumanInteraction["Human Interaction"]
+        ErrorRecovery["Error Recovery"]
+        Scheduling["Task Scheduling"]
+    end
+
+    Delivery --> TaskDecomp
+    Delivery --> ErrorRecovery
+    Patrol --> Scheduling
+    Patrol --> StateManagement
+    Guide --> HumanInteraction
+    Fetch --> TaskDecomp
+    Fetch --> StateManagement
+```
+
+### Core Skills
+
+| Skill | Description | R550 Task |
+|-------|-------------|----------|
+| Behavior Trees (advanced) | Custom BT nodes beyond Nav2 defaults | "Approach shelf, align precisely, signal arrival" |
+| State machines | Managing complex multi-phase operations | Delivery state: `IDLE → PICKUP → TRANSIT → DELIVER → RETURN` |
+| ROS 2 actions/services | Custom inter-node communication | Mission planner ↔ Nav2 ↔ hardware actuators |
+| Safety engineering | Preventing physical harm | E-stop, geofencing, speed limits near people |
+| API design | External system integration | REST/MQTT interface for warehouse management system |
+
+### Hard Parts at This Layer
+- **Error combinatorics:** What if pickup succeeds but transit fails? What if battery dies mid-delivery? Every combination needs handling
+- **Human interaction:** People are unpredictable — they block paths, move objects, give ambiguous commands
+- **Multi-robot conflicts:** Two robots heading for the same narrow corridor — who yields?
+- **Testing:** Can't unit-test a delivery workflow — need full integration testing with hardware-in-the-loop
+
+### 🤖 LLM Integration Opportunities
+
+> [!IMPORTANT]
+> This layer has the HIGHEST LLM impact potential. The LLM essentially becomes the robot's "brain" for decision-making.
+
+| Opportunity | How It Works | Difficulty |
+|-------------|-------------|-----------|
+| **Natural language missions** | "Deliver this to Lab 3, it's fragile so go slow" → LLM decomposes into waypoints with `max_vel_x: 0.15` override | Medium |
+| **Adaptive error recovery** | Nav2 reports "stuck after 3 recovery attempts" → LLM analyzes context: "Try alternative route through corridor B" or "Request human help" | Medium |
+| **Human interaction** | Person asks robot "where is the meeting room?" → LLM responds with speech + offers to guide them there | Medium |
+| **Task prioritization** | Queue has 5 deliveries. LLM considers: distance, urgency, battery level, corridor congestion, time-of-day → optimal ordering | Medium |
+| **Explainable decisions** | Manager asks "why did the robot take the long route?" → LLM explains: "The short route through Hall B was blocked by a loading cart at 14:32" | Low |
+| **Multi-robot negotiation** | Two robot LLMs communicate: "I'm carrying urgent cargo, please yield corridor C" / "Acknowledged, rerouting via corridor D" | High |
+| **Learning from experience** | LLM logs: "Route X fails 40% of the time between 12-1 PM (lunch traffic)" → automatically avoids it during those hours | High |
+
+---
+
+## Layer 5: 🔴🔴 Production Reliability
+
+**Status: 🔮 Long-term**
+
+### What It Is
+Running the robot 24/7 in a real environment without someone watching it. This is systems engineering, not robotics — and it's where most commercial robot projects fail.
+
+### Requirements
+
+```mermaid
+graph TD
+    subgraph RELIABILITY["Production Requirements"]
+        Uptime["99.5% Uptime<br/>Max 3.6 hrs downtime/month"]
+        Recovery["Auto-Recovery<br/>From any failure state"]
+        Monitoring["Remote Monitoring<br/>Fleet dashboard"]
+        Updates["OTA Updates<br/>Zero-downtime deploys"]
+        Security["Security<br/>Prevent unauthorized control"]
+    end
+
+    subgraph FAILURES["Failure Modes to Handle"]
+        WiFi["WiFi drops"]
+        Sensor["Sensor failure"]
+        Motor["Motor overheating"]
+        Kidnap["Robot kidnapped<br/>(picked up and moved)"]
+        Power["Power brownout"]
+        Software["Software crash"]
+        Environment["Environment change<br/>(furniture moved)"]
+    end
+
+    Failures -->|"must auto-recover from"| RELIABILITY
+```
+
+### Core Skills
+
+| Skill | Description | R550 Task |
+|-------|-------------|----------|
+| Watchdog systems | Detecting and recovering from hangs | Process supervisor that restarts crashed nodes |
+| Telemetry | Streaming robot health to cloud | Battery, motor temp, CPU load, nav success rate |
+| OTA updates | Remote software deployment | Deploy new nav params without physical access |
+| Security | Preventing hijacking | Authenticated ROS 2 DDS, encrypted Foxglove |
+| Fleet management | Coordinating multiple robots | Central scheduler, traffic management |
+
+### Hard Parts at This Layer
+- **Unknown unknowns:** You can't predict every failure mode — someone will spill coffee on the floor, creating a slippery patch that causes the robot to spin out
+- **Debugging remotely:** The robot is in a warehouse 500 miles away. You can't plug in a monitor
+- **Graceful degradation:** If the LiDAR fails, can the robot navigate with just odometry at reduced speed? Or must it stop entirely?
+- **Regulatory compliance:** Safety certifications, insurance, liability if the robot injures someone
+
+### 🤖 LLM Integration Opportunities
+
+| Opportunity | How It Works | Difficulty |
+|-------------|-------------|-----------|
+| **Predictive maintenance** | LLM monitors trends: "Motor current draw has increased 15% over 2 weeks — bearing may be wearing, schedule maintenance" | Medium |
+| **Incident reports** | Robot gets stuck → LLM auto-generates: "At 14:32, robot R550-03 got stuck in Hallway B due to a newly placed trash bin. Recovery: spun 360°, backed up, rerouted. Resolution time: 47s" | Low |
+| **Fleet intelligence** | "Robots 1 and 3 both reported difficulty in Zone C today. Likely a new obstacle or floor condition change. Dispatching inspection task" | Medium |
+| **Root cause analysis** | Navigation failure log → LLM traces: "Goal failed → controller timeout → costmap showed phantom obstacle → LiDAR reported 0.3m range at 45° → this matches the new glass partition installed yesterday" | High |
+| **Self-healing configs** | LLM detects: "Navigation success rate dropped from 95% to 70% after environment change" → auto-adjusts inflation radius and costmap parameters → rate recovers to 92% | High |
+| **Natural language ops** | Ops engineer asks: "Why did robot 5 stop working at 3 AM?" → LLM queries logs, generates human-readable incident report with timeline and recommendations | Low |
+
+---
+
+## Developer Progression Roadmap
+
+| Stage | Layers | What You Build | Key Skills to Develop |
+|-------|--------|---------------|----------------------|
+| **🟢 Beginner** | 1 | URDF, launch files, Nav2 config, Gazebo sim | ROS 2 CLI, YAML/XML, TF tree concepts |
+| **🟡 Intermediate** | 1-2 | Hardware drivers, sensor calibration, sim-to-real | Python/C++ ROS nodes, PID control, hardware debugging |
+| **🟠 Advanced** | 1-3 | EKF fusion, computer vision, SLAM, custom perception | Kalman filters, OpenCV, point cloud processing |
+| **🔴 Senior** | 1-4 | Custom planners, application logic, fleet systems | Behavior trees, state machines, distributed systems |
+| **🔴🔴 Principal** | 1-5 | Production reliability, autonomous operations | Systems engineering, safety certification, ML ops |
+
+### Where LLM Skills Compound
+
+```mermaid
+graph LR
+    subgraph EASY["Quick Wins (Start Here)"]
+        LogAnalysis["Log Analysis<br/>& Debugging"]
+        ConfigGen["Config<br/>Generation"]
+        IncidentReports["Incident<br/>Reports"]
+    end
+
+    subgraph MEDIUM["High-Impact Projects"]
+        MissionPlanning["Natural Language<br/>Mission Planning"]
+        SceneUnderstanding["Camera + VLM<br/>Scene Understanding"]
+        ErrorRecovery["Adaptive Error<br/>Recovery"]
+    end
+
+    subgraph ADVANCED["Frontier Research"]
+        SelfHealing["Self-Healing<br/>Configuration"]
+        FleetIntel["Fleet<br/>Intelligence"]
+        PredictiveMaint["Predictive<br/>Maintenance"]
+    end
+
+    EASY --> MEDIUM --> ADVANCED
+```
+
+---
+
+## R550 Milestone Plan
+
+A suggested progression for the R550 project, with LLM integration points marked:
+
+### Phase 1: Foundation ✅ (Current)
+- [x] R550 URDF with Gazebo simulation
+- [x] Nav2 mapless navigation configured
+- [x] Docker dev environment with Foxglove
+- [ ] Validate Nav2 end-to-end in Gazebo (send goal, watch robot navigate)
+
+### Phase 2: Enhanced Navigation
+- [ ] Bluetooth anchor node + EKF sensor fusion (Layer 3)
+- [ ] SLAM with `slam_toolbox` for map building (Layer 3)
+- [ ] 🤖 LLM: Config tuning advisor — feed nav logs, get parameter suggestions
+
+### Phase 3: Real Hardware
+- [ ] Wheeltec R550 hardware driver integration (Layer 2)
+- [ ] Real LiDAR calibration and noise filtering (Layer 2)
+- [ ] Motor PID tuning on physical robot (Layer 2)
+- [ ] 🤖 LLM: Log analysis agent — diagnose sim-to-real discrepancies
+
+### Phase 4: Intelligence
+- [ ] Camera integration + object detection (Layer 3)
+- [ ] 🤖 LLM: Mission planner node — natural language → waypoint sequences (Layer 4)
+- [ ] 🤖 LLM: Scene understanding with Vision-Language Model (Layer 3)
+- [ ] Location registry with named waypoints (Layer 4)
+
+### Phase 5: Production
+- [ ] Multi-mission state machine (Layer 4)
+- [ ] Remote monitoring dashboard (Layer 5)
+- [ ] 🤖 LLM: Incident reporting + fleet intelligence (Layer 5)
+- [ ] Safety systems: E-stop, geofencing, speed limits (Layer 4)
+- [ ] 🤖 LLM: Self-healing configuration (Layer 5)
+
+---
+
+## Cross-Reference Index
+
+| Topic | Primary Doc | Relevant Layer |
+|-------|-----------|---------------|
+| Nav2 architecture & components | [Navigation.md](Navigation.md) Part 1-2 | Layer 1 |
+| Nav2 package architecture | [Navigation.md](Navigation.md) Part 2.1 | Layer 1 |
+| TF tree design | [Navigation.md](Navigation.md) Part 3 | Layer 1 |
+| Bluetooth anchor integration | [Navigation.md](Navigation.md) Part 4 | Layer 3 |
+| LLM mission planner design | [Navigation.md](Navigation.md) Part 6 | Layer 4 |
+| Robot URDF & physics | [Overview.md](Overview.md) | Layer 1 |
+| Docker dev environment | [Overview.md](Overview.md) | Layer 1 |
+| Sim-to-real transfer | This document, Layer 2 | Layer 2 |
+| Sensor fusion (EKF) | This document, Layer 3 | Layer 3 |
+| Production reliability | This document, Layer 5 | Layer 5 |
