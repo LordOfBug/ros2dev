@@ -31,7 +31,8 @@ def generate_launch_description():
 
     # 5. 引入 Nav2 官方的核心导航组装线 (navigation_launch.py)
     # 它会自动拉起：控制器服务器、规划器服务器、行为树导航器、恢复行为服务器等。
-    # 因为我们是无图导航模式 (Mapless)，所以只启动核心导航节点，完全不需要拉起 AMCL 定位和 Map Server！
+    # 因为我们使用 SLAM 模式，所以只启动核心导航节点。
+    # 地图服务由 r550_slam.launch.py (mapping) 或 r550_slam_loc.launch.py (localization) 提供。
     launch_navigation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(nav2_bringup_share, 'launch', 'navigation_launch.py')
