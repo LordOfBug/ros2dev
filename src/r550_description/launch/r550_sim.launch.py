@@ -25,22 +25,31 @@ def generate_launch_description():
     )
 
     # 4. 导入 Gazebo 官方的启动脚本 (Turn off GUI by setting gui to false)
+    #    支持通过 world:=xxx 参数加载自定义世界文件
+    default_world = os.path.join(pkg_share, 'worlds', 'empty.world')
     gazebo_pkg_launch = os.path.join(get_package_share_directory('gazebo_ros'), 'launch', 'gazebo.launch.py')
+
+    declare_world = DeclareLaunchArgument(
+        'world', default_value='',
+        description='Path to Gazebo world file (leave empty for default empty world)')
+
     launch_gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(gazebo_pkg_launch),
-        launch_arguments={'world': '', 'gui': 'false'}.items() # <-- Change 'false' here
+        launch_arguments={'world': LaunchConfiguration('world'), 'gui': 'false'}.items()
     )
     
     # 5. 启动一个叫 spawn_entity 的节点，把我们的 3D R550 小车“扔”进 Gazebo 虚拟世界中
     node_spawn_entity = Node(
         package='gazebo_ros',
         executable='spawn_entity.py',
-        arguments=['-topic', 'robot_description', '-entity', 'r550_robot', '-z', '0.1'],
+        arguments=['-topic', 'robot_description', '-entity', 'r550_robot',
+                   '-x', '0.0', '-y', '-2.0', '-z', '0.1'],
         output='screen'
     )
 
     # 6. 整合所有任务
     return LaunchDescription([
+        declare_world,
         node_robot_state_publisher,
         launch_gazebo,
         node_spawn_entity

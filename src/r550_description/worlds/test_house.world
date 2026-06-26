@@ -1,0 +1,224 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="r550_test_house">
+    
+    <!-- 基础物理与光照 -->
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <physics type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <!--
+      ╔══════════════════════════════════════════════╗
+      ║  R550 测试房屋 — 10m × 8m                    ║
+      ║  两个房间 + 走廊 + 门洞                       ║
+      ║                                              ║
+      ║   ┌──────────┬─────────────┐                 ║
+      ║   │  房间 A   │   房间 B    │                 ║
+      ║   │  (4×4m)  门  (5×4m)    │                 ║
+      ║   │          │             │                 ║
+      ║   ├────门────┤             │                 ║
+      ║   │                       │                 ║
+      ║   │      走廊 (10×4m)      │                 ║
+      ║   │          R550          │                 ║
+      ║   └───────────────────────┘                 ║
+      ╚══════════════════════════════════════════════╝
+    -->
+
+    <!-- ============== 外墙 ============== -->
+
+    <!-- 南墙 (底部, y=-4) -->
+    <model name="wall_south">
+      <static>true</static>
+      <pose>0 -4 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>10 0.1 1.0</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>10 0.1 1.0</size></box></geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 北墙 (顶部, y=4) -->
+    <model name="wall_north">
+      <static>true</static>
+      <pose>0 4 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>10 0.1 1.0</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>10 0.1 1.0</size></box></geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 西墙 (左侧, x=-5) -->
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-5 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 8 1.0</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.1 8 1.0</size></box></geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 东墙 (右侧, x=5) -->
+    <model name="wall_east">
+      <static>true</static>
+      <pose>5 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 8 1.0</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.1 8 1.0</size></box></geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============== 内墙：水平隔墙 (y=0, 将空间分为上下两层) ============== -->
+    
+    <!-- 内墙左段 (x=-5 到 x=-1.5, 留出 1m 门洞在 x=-1 处) -->
+    <model name="inner_wall_left">
+      <static>true</static>
+      <pose>-3.25 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>3.5 0.1 1.0</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>3.5 0.1 1.0</size></box></geometry>
+          <material>
+            <ambient>0.8 0.6 0.4 1</ambient>
+            <diffuse>0.8 0.6 0.4 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 内墙右段 (x=-0.5 到 x=5, 门洞在 x=-1 到 x=-0.5 之间) -->
+    <model name="inner_wall_right">
+      <static>true</static>
+      <pose>2.25 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>5.5 0.1 1.0</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>5.5 0.1 1.0</size></box></geometry>
+          <material>
+            <ambient>0.8 0.6 0.4 1</ambient>
+            <diffuse>0.8 0.6 0.4 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============== 内墙：竖直隔墙 (x=0, 将上层分为房间 A 和 B) ============== -->
+
+    <!-- 竖直内墙上段 (y=1.5 到 y=4, 留出 1m 门洞在 y=0.5 到 y=1.5) -->
+    <model name="inner_wall_vert_top">
+      <static>true</static>
+      <pose>0 2.75 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 2.5 1.0</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.1 2.5 1.0</size></box></geometry>
+          <material>
+            <ambient>0.8 0.6 0.4 1</ambient>
+            <diffuse>0.8 0.6 0.4 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============== 房间内障碍物 ============== -->
+
+    <!-- 房间 A 中的桌子 -->
+    <model name="table_room_a">
+      <static>true</static>
+      <pose>-3 2.5 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.8 0.6 0.6</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.8 0.6 0.6</size></box></geometry>
+          <material>
+            <ambient>0.5 0.3 0.1 1</ambient>
+            <diffuse>0.6 0.4 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 房间 B 中的柜子 -->
+    <model name="cabinet_room_b">
+      <static>true</static>
+      <pose>3 3 0.4 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>1.0 0.4 0.8</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.0 0.4 0.8</size></box></geometry>
+          <material>
+            <ambient>0.4 0.4 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.6 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 走廊中的箱子 -->
+    <model name="box_corridor">
+      <static>true</static>
+      <pose>2 -2 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material>
+            <ambient>0.8 0.2 0.2 1</ambient>
+            <diffuse>0.9 0.3 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

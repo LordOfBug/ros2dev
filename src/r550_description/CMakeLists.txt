@@ -11,7 +11,7 @@ find_package(ament_cmake REQUIRED)
 
 # 核心：将我们的 3D 模型(urdf)和启动脚本(launch)安装到系统共享路径中
 install(
-  DIRECTORY urdf launch config
+  DIRECTORY urdf launch config worlds
   DESTINATION share/${PROJECT_NAME}
 )
 
@@ -20,7 +20,9 @@ install(
 # 只有添加了这一步，colcon build 才会将脚本拷贝到 install 空间，ros2 run 才能成功识别它！
 # =========================================================================
 install(
-  PROGRAMS scripts/foxglove_spawner.py
+  PROGRAMS
+    scripts/foxglove_spawner.py
+    scripts/frontier_explorer.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
