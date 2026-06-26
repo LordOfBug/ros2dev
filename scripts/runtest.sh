@@ -76,19 +76,19 @@ echo "========================================"
 
 # 1. 启动 Gazebo 物理仿真世界
 echo "   [1/4] 启动物理仿真世界 (sim.log)..."
-ros2 launch r550_description r550_sim.launch.py > "$WORKSPACE_DIR/sim.log" 2>&1 &
+(ros2 launch r550_description r550_sim.launch.py 2>&1 | awk '{ print "[" strftime("%Y-%m-%d %H:%M:%S") "] " $0; fflush() }' > "$WORKSPACE_DIR/sim.log") &
 pids+=($!)
 sleep 4  # 等待仿真物理引擎就绪
 
 # 2. 启动 SLAM 建图与定位
 echo "   [2/4] 启动 SLAM 建图 (slam.log)..."
-ros2 launch r550_description r550_slam.launch.py > "$WORKSPACE_DIR/slam.log" 2>&1 &
+(ros2 launch r550_description r550_slam.launch.py 2>&1 | awk '{ print "[" strftime("%Y-%m-%d %H:%M:%S") "] " $0; fflush() }' > "$WORKSPACE_DIR/slam.log") &
 pids+=($!)
 sleep 3  # 等待 SLAM/TF 广播就绪
 
 # 3. 启动 Nav2 导航
 echo "   [3/4] 启动 Nav2 导航服务 (nav.log)..."
-ros2 launch r550_description r550_nav2.launch.py > "$WORKSPACE_DIR/nav.log" 2>&1 &
+(ros2 launch r550_description r550_nav2.launch.py 2>&1 | awk '{ print "[" strftime("%Y-%m-%d %H:%M:%S") "] " $0; fflush() }' > "$WORKSPACE_DIR/nav.log") &
 pids+=($!)
 sleep 6  # 等待行为树与控制器激活
 
@@ -96,7 +96,7 @@ sleep 6  # 等待行为树与控制器激活
 echo "   [4/4] 启动 Frontier 自动探索节点 (plan.log)..."
 export PYTHONUNBUFFERED=1
 export RCUTILS_LOGGING_BUFFERED_STREAM=0
-ros2 run r550_description frontier_explorer.py > "$WORKSPACE_DIR/plan.log" 2>&1 &
+(ros2 run r550_description frontier_explorer.py 2>&1 | awk '{ print "[" strftime("%Y-%m-%d %H:%M:%S") "] " $0; fflush() }' > "$WORKSPACE_DIR/plan.log") &
 pids+=($!)
 
 echo "========================================"
