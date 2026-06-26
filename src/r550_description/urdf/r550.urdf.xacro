@@ -101,13 +101,15 @@
 
         <gazebo reference="${prefix}_wheel">
             <material>Gazebo/Black</material>
-            <!-- 【接触力学优化 2】：
-                 - mu1/mu2 改为 0.5：降低滑移转向的侧向死锁阻力，让小车能够丝滑原地自转。
-                 - kp (stiffness) 设为 1e6：提供强大的支撑刚度，防止轮子微观陷入地下。
-                 - kd (damping) 设为 100：吸收地面接触震动。
-                 - minDepth 设为 0.001：允许 1 毫米的计算穿透容差，彻底消除 ODE 碰撞求解器导致的关节物理锁死。 -->
-            <mu1>0.5</mu1>
-            <mu2>0.5</mu2>
+            <!-- 恢复稳定且专为滑移转向优化的力学参数：
+                 - mu1 设为 1.0：提供强劲的纵向抓地力，保证小车能前进/后退
+                 - mu2 设为 0.15：提供适当的侧向滑动摩擦力，消除侧滑死锁的同时防止像在冰上一样甩尾
+                 - kp (stiffness) 设为 1e6：提供足够的接触刚度
+                 - kd (damping) 设为 100：吸收震动
+                 - minDepth 设为 0.001：允许穿透容差防卡死
+                 - maxVel 设为 0.1：限制最大接触速度，稳定物理求解器 -->
+            <mu1>1.0</mu1>
+            <mu2>0.15</mu2>
             <kp>1000000.0</kp>
             <kd>100.0</kd>
             <minDepth>0.001</minDepth>
@@ -166,7 +168,7 @@
                     </horizontal>
                 </scan>
                 <range>
-                    <min>0.15</min>
+                    <min>0.28</min>
                     <max>12.0</max>
                     <resolution>0.01</resolution>
                 </range>
@@ -208,9 +210,8 @@
             <wheel_diameter>0.08</wheel_diameter>
             <wheel_diameter>0.08</wheel_diameter>
             
-            <!-- 【接触力学优化 3】：将每个车轮的最大动力扭矩提升至强劲的 20.0 N·m，瞬间释放电机马力，绝不卡死 -->
-            <max_wheel_torque>20.0</max_wheel_torque>
-            <max_wheel_acceleration>2.0</max_wheel_acceleration>
+            <!-- 限制最大扭矩以确保 Gazebo ODE 物理求解器稳定运行，防止关节瞬间撕裂或物理锁死 -->
+            <max_wheel_torque>2.0</max_wheel_torque>
             
             <publish_odom>true</publish_odom>
             <publish_odom_tf>true</publish_odom_tf>

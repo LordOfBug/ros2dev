@@ -74,11 +74,12 @@ bt_navigator:
 controller_server:
   ros__parameters:
     use_sim_time: True
-    controller_frequency: 20.0
+    controller_frequency: 5.0
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
+    controller_patience: 3.0        # 增加控制器容忍度，在放弃前最多尝试 3.0 秒寻找有效路径
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]
@@ -86,15 +87,15 @@ controller_server:
     # 进度检查：确保小车在走，没有卡住
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.3   # 降低移动阈值，0.3m 即算有进展 (skid-steer 转弯时前进距离较小)
-      movement_time_allowance: 20.0   # 给更多时间 (skid-steer 转弯慢)
+      required_movement_radius: 0.1   # 降低移动距离阈值到 10cm，防止原地旋转调整时误判为卡死
+      movement_time_allowance: 30.0   # 延长允许时间到 30 秒，确保小车有充裕时间完成旋转和起步
 
     # 目标判断：何时算到达终点
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.15      # 终点误差 15cm
-      yaw_goal_tolerance: 0.25     # 朝向误差 0.25 弧度
+      yaw_goal_tolerance: 3.6      # 放宽朝向误差到 3.6 弧度 (探索模式下朝向无所谓，防止到点后原地旋转撞墙卡死)
 
     # DWB 局部避障控制器
     FollowPath:
@@ -104,10 +105,11 @@ controller_server:
       max_vel_x: 0.4               # R550 实车安全最高速度
       min_vel_y: 0.0
       max_vel_y: 0.0
+      min_vel_theta: -1.0          # 允许双向转弯 (rad/s)
       max_vel_theta: 1.0           # 最大转弯速度 (rad/s)
       min_speed_xy: 0.0
       max_speed_xy: 0.4
-      min_speed_theta: 0.1
+      min_speed_theta: 0.0         # 允许精细的原地旋转和纯旋转调整
       acc_lim_x: 1.0
       acc_lim_y: 0.0
       acc_lim_theta: 1.5
@@ -122,15 +124,17 @@ controller_server:
       angular_granularity: 0.025
       transform_tolerance: 0.2
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.05        # 提高障碍物惩罚 (之前 0.02 太低)
-      PathAlign.scale: 32.0
-      GoalAlign.scale: 20.0           # 降低朝向对齐权重，减少原地转弯
-      PathDist.scale: 32.0
-      GoalDist.scale: 28.0            # 提高接近目标权重，鼓励向前运动
+      RotateToGoal.scale: 32.0        # 为 RotateToGoal 插件补充缺失的权重配置，以启用正确的自转控制
+      BaseObstacle.scale: 2.0         # 显著提高避障权重，防止小车贴墙行驶并卡死
+      PathAlign.scale: 10.0           # 降低路径对齐权重，防止蛇行与频繁微调
+      GoalAlign.scale: 5.0            # 降低目标对齐权重，减少原地来回摆动
+      PathDist.scale: 32.0            # 保持主路径吸引力
+      GoalDist.scale: 24.0            # 保持主目标吸引力
+      Oscillation.scale: 10.0         # 启用并提高震荡惩罚，抑制左右来回摆动
 
 planner_server:
   ros__parameters:
-    expected_planner_frequency: 20.0
+    expected_planner_frequency: 2.0
     use_sim_time: True
     planner_plugins: ["GridBased"]
     GridBased:
@@ -156,8 +160,16 @@ behavior_server:
     behavior_plugins: ["spin", "backup", "wait"]
     spin:
       plugin: "nav2_behaviors/Spin"
+      simulate_ahead_time: 2.0         # 降低预测碰撞时间 (默认 15s 太长，在狭窄空间会导致 spin 无法执行直接超时)
+      max_rotational_vel: 1.0          # 提高旋转避障动作的速度
+      min_rotational_vel: 0.4
+      rotational_acc_lim: 3.2
     backup:
       plugin: "nav2_behaviors/BackUp"
+      simulate_ahead_time: 2.0         # 降低预测碰撞时间，允许在狭窄通道向后倒退
+      max_linear_vel: 0.15
+      min_linear_vel: 0.05
+      linear_acc_lim: 1.0
     wait:
       plugin: "nav2_behaviors/Wait"
 
@@ -194,10 +206,10 @@ global_costmap:
       robot_radius: 0.18
       resolution: 0.05
       
-      # SLAM 模式下使用滚动窗口，跟随机器人位置移动，不再需要固定原点
+      # SLAM 模式下使用滚动窗口 (大小设为轻量级 20m x 20m，避免 100m x 100m 导致 CPU 负载过高和控制循环超时)
       rolling_window: true
-      width: 100
-      height: 100
+      width: 20
+      height: 20
       
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
@@ -211,13 +223,13 @@ global_costmap:
           marking: True
           data_type: "LaserScan"
           raytrace_max_range: 3.0
-          raytrace_min_range: 0.0
+          raytrace_min_range: 0.28    # 忽略 28cm 以内的自遮挡清除，消除自身阴影
           obstacle_max_range: 2.5
-          obstacle_min_range: 0.0
+          obstacle_min_range: 0.28    # 忽略 28cm 以内的自遮挡标记，防自画障碍物
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.35  # 安全气垫罩厚度：35cm，100% 防蹭墙
+        cost_scaling_factor: 10.0
+        inflation_radius: 0.45  # 安全气垫罩厚度：45cm，100% 防蹭墙
 
 local_costmap:
   local_costmap:
@@ -243,7 +255,11 @@ local_costmap:
           clearing: True
           marking: True
           data_type: "LaserScan"
+          raytrace_max_range: 3.0
+          raytrace_min_range: 0.28    # 忽略 28cm 以内的自遮挡清除，消除自身阴影
+          obstacle_max_range: 2.5
+          obstacle_min_range: 0.28    # 忽略 28cm 以内的自遮挡标记，防自画障碍物
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.35
+        cost_scaling_factor: 10.0
+        inflation_radius: 0.45

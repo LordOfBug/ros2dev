@@ -12,6 +12,7 @@ R550 自主探索节点 — Frontier Exploration
 
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
 from nav_msgs.msg import OccupancyGrid
@@ -32,7 +33,7 @@ class FrontierExplorer(Node):
         self.declare_parameter('min_frontier_size', 5)        # 最小 frontier 像素数（过滤噪声）
         self.declare_parameter('exploration_timeout', 120.0)  # 单次导航超时（秒）
         self.declare_parameter('robot_frame', 'base_footprint')
-        self.declare_parameter('blacklist_radius', 0.5)       # 失败目标的屏蔽半径（米）
+        self.declare_parameter('blacklist_radius', 0.8)       # 失败目标的屏蔽半径（米，应大于 goal_offset）
         self.declare_parameter('update_interval', 2.0)        # 地图分析间隔（秒）
         self.declare_parameter('min_goal_distance', 1.0)      # 忽略距离机器人太近的 frontier（米）
         self.declare_parameter('goal_offset', 0.5)            # 目标点从 frontier 向机器人方向偏移的距离（米）
@@ -381,11 +382,12 @@ def main(args=None):
     node = FrontierExplorer()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
