@@ -109,7 +109,7 @@ controller_server:
       simulate_ahead_time: 1.0
       rotate_to_goal_heading: false
       debug_trajectory_details: True
-      min_vel_x: 0.0
+      min_vel_x: 0.08
       max_vel_x: 0.3                 # 探索模式合理速度
       min_vel_y: 0.0
       max_vel_y: 0.0
@@ -134,8 +134,8 @@ controller_server:
       short_circuit_trajectory_evaluation: True   # 发现无效轨迹立即跳过，加快评估
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
       BaseObstacle.scale: 1.0         # 适度避障，防止刷墙/擦障碍物
-      PathAlign.scale: 8.0            # 降低对齐惩罚，允许平滑切入
-      GoalAlign.scale: 6.0             # 降低对齐惩罚，允许平滑切入
+      PathAlign.scale: 0.0            # 彻底禁用对齐惩罚，由 RotationShimController 统一处理旋转，避免 DWB 微观调整打滑
+      GoalAlign.scale: 0.0            # 彻底禁用对齐惩罚，由 RotationShimController 统一处理旋转，避免 DWB 微观调整打滑
       PathDist.scale: 32.0            # Nav2 默认值
       GoalDist.scale: 24.0            # Nav2 默认值
       RotateToGoal.scale: 32.0        # Nav2 默认值

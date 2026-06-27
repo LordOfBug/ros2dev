@@ -34,7 +34,7 @@ class FrontierExplorer(Node):
         super().__init__('frontier_explorer')
 
         # ===================== 可配置参数 =====================
-        self.declare_parameter('min_frontier_size', 5)
+        self.declare_parameter('min_frontier_size', 15)
         self.declare_parameter('robot_frame', 'base_footprint')
         self.declare_parameter('blacklist_radius', 0.5)        # 失败屏蔽半径（缩小以避免过度封锁）
         self.declare_parameter('update_interval', 2.0)
@@ -194,7 +194,7 @@ class FrontierExplorer(Node):
         if self.is_backing_up and self.backup_ticks_remaining > 0:
             msg = Twist()
             msg.linear.x = -0.1  # 后退速度
-            msg.angular.z = 0.0
+            msg.angular.z = 0.2  # 增加微小的旋转，使后退轨迹呈弧线，利于在贴墙/滑移时摆脱摩擦锁死
             self.cmd_vel_pub.publish(msg)
             self.backup_ticks_remaining -= 1
             if self.backup_ticks_remaining == 0:
@@ -279,8 +279,26 @@ class FrontierExplorer(Node):
                         self.blacklisted_goals.append(self.current_goal_xy)
                         if self.original_goal_xy is not None:
                             self.blacklisted_goals.append(self.original_goal_xy)
+                    # 将机器人当前位置也加入黑名单，防止在原地继续规划附近的点
+                    self.blacklisted_goals.append((robot_x, robot_y))
                     self.stuck_ticks = 0
                     self.retry_count = 2  # 设为 2 以跳过 retry_count == 0 时的垂直偏移重试阶段
+                    self.cancel_current_goal()
+                    
+                    # 触发 1.5 秒 (15 ticks @ 10Hz) 的主动后退动作
+                    self.is_backing_up = True
+                    self.backup_ticks_remaining = 15
+                    return
+                elif self.stuck_ticks >= 5:
+                    self.get_logger().warn(f'🚨 判定卡阻（超时）！连续未移动 tick={self.stuck_ticks}，车头虽无明显障碍物，但可能侧面/后面卡住或打滑。执行后退避障并加入黑名单。')
+                    if self.current_goal_xy is not None:
+                        self.blacklisted_goals.append(self.current_goal_xy)
+                        if self.original_goal_xy is not None:
+                            self.blacklisted_goals.append(self.original_goal_xy)
+                    # 将机器人当前位置也加入黑名单，防止在原地继续规划附近的点
+                    self.blacklisted_goals.append((robot_x, robot_y))
+                    self.stuck_ticks = 0
+                    self.retry_count = 2
                     self.cancel_current_goal()
                     
                     # 触发 1.5 秒 (15 ticks @ 10Hz) 的主动后退动作
