@@ -115,7 +115,7 @@ controller_server:
       max_vel_y: 0.0
       min_vel_theta: -1.0            # 允许双向转弯 (rad/s)
       max_vel_theta: 1.0             # 最大转弯速度 (rad/s)
-      min_speed_xy: 0.0
+      min_speed_xy: 0.08
       max_speed_xy: 0.3
       min_speed_theta: 0.0
       acc_lim_x: 2.5                 # Nav2 默认加速度
@@ -134,8 +134,8 @@ controller_server:
       short_circuit_trajectory_evaluation: True   # 发现无效轨迹立即跳过，加快评估
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
       BaseObstacle.scale: 1.0         # 适度避障，防止刷墙/擦障碍物
-      PathAlign.scale: 32.0           # Nav2 默认值
-      GoalAlign.scale: 24.0           # Nav2 默认值
+      PathAlign.scale: 8.0            # 降低对齐惩罚，允许平滑切入
+      GoalAlign.scale: 6.0             # 降低对齐惩罚，允许平滑切入
       PathDist.scale: 32.0            # Nav2 默认值
       GoalDist.scale: 24.0            # Nav2 默认值
       RotateToGoal.scale: 32.0        # Nav2 默认值
@@ -232,9 +232,9 @@ global_costmap:
           marking: True
           data_type: "LaserScan"
           raytrace_max_range: 3.0
-          raytrace_min_range: 0.28
+          raytrace_min_range: 0.0
           obstacle_max_range: 2.5
-          obstacle_min_range: 0.28
+          obstacle_min_range: 0.05
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # Nav2 默认值：渐进衰减，通道中间有足够低代价空间
@@ -265,9 +265,9 @@ local_costmap:
           marking: True
           data_type: "LaserScan"
           raytrace_max_range: 3.0
-          raytrace_min_range: 0.28
+          raytrace_min_range: 0.0
           obstacle_max_range: 2.5
-          obstacle_min_range: 0.28
+          obstacle_min_range: 0.05
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # Nav2 默认值

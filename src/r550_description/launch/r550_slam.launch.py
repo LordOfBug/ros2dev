@@ -13,7 +13,7 @@ def generate_launch_description():
         'base_frame': 'base_footprint',# 机器人底盘投影坐标系
         'scan_topic': '/scan',         # 订阅的雷达通道
         'mode': 'mapping',             # 运行模式：建图模式
-        'min_laser_range': 0.28,       # 设置最小扫描范围以消除车身自遮挡噪点
+        'min_laser_range': 0.05,       # 设置最小扫描范围以消除车身自遮挡噪点
         
         # 扫描匹配与闭环检测（Loop Closure）核心参数，保证建图时墙壁不会重影、错位
         'solver_plugin': 'solver_plugins::CeresSolver', # Ceres 优化求解器

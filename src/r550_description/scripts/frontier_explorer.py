@@ -58,6 +58,7 @@ class FrontierExplorer(Node):
         self.goals_succeeded = 0
         self.exploration_complete = False
         self.current_goal_xy = None
+        self.original_goal_xy = None
         self.current_goal_handle = None
         self.nav_start_time = None
         self.last_progress_time = None
@@ -233,15 +234,16 @@ class FrontierExplorer(Node):
                 yaw_diff = 2 * math.pi - yaw_diff
                 
             # 只有当位移 and 旋转都很小时，才认为卡阻并增加 stuck_ticks
-            if dist_moved < 0.05 and yaw_diff < 0.08:
+            if dist_moved < 0.01 and yaw_diff < 0.08:
                 self.stuck_ticks += 1
                 self.get_logger().warn(
-                    f'⚠️ 物理卡阻检测: 机器人几乎无位移和旋转 (移动 {dist_moved:.3f}m < 0.05m, 旋转 {yaw_diff:.3f}rad < 0.08rad)，stuck_ticks 增加至 {self.stuck_ticks}')
+                    f'⚠️ 物理卡阻检测: 机器人几乎无位移和旋转 (移动 {dist_moved:.3f}m < 0.01m, 旋转 {yaw_diff:.3f}rad < 0.08rad)，stuck_ticks 增加至 {self.stuck_ticks}')
             else:
                 if self.stuck_ticks > 0:
                     self.get_logger().info(
                         f'✅ 物理卡阻检测: 检测到明显运动 (移动 {dist_moved:.3f}m, 旋转 {yaw_diff:.3f}rad)，stuck_ticks 重置为 0')
                 self.stuck_ticks = 0
+                self.last_progress_time = now
         else:
             self.stuck_ticks = 0
 
@@ -275,6 +277,8 @@ class FrontierExplorer(Node):
                     self.get_logger().warn(f'🚨 判定受阻！连续未移动 tick={self.stuck_ticks} 且车头前方 {blocked_dist}m 处检测到墙体/障碍物。执行后退避障并加入黑名单。')
                     if self.current_goal_xy is not None:
                         self.blacklisted_goals.append(self.current_goal_xy)
+                        if self.original_goal_xy is not None:
+                            self.blacklisted_goals.append(self.original_goal_xy)
                     self.stuck_ticks = 0
                     self.retry_count = 2  # 设为 2 以跳过 retry_count == 0 时的垂直偏移重试阶段
                     self.cancel_current_goal()
@@ -295,12 +299,14 @@ class FrontierExplorer(Node):
                 self.cancel_current_goal()
 
     def cancel_current_goal(self):
+        self.is_navigating = False
         if self.current_goal_handle is not None:
             self.current_goal_handle.cancel_goal_async()
         else:
             if self.current_goal_xy:
                 self.blacklisted_goals.append(self.current_goal_xy)
-            self.is_navigating = False
+                if self.original_goal_xy is not None:
+                    self.blacklisted_goals.append(self.original_goal_xy)
             self.current_goal_handle = None
 
     # ===================== Frontier 检测 =====================
@@ -534,6 +540,8 @@ class FrontierExplorer(Node):
         self.is_navigating = True
         self.goals_sent += 1
         self.current_goal_xy = (x, y)
+        if self.retry_count == 0:
+            self.original_goal_xy = (x, y)
         self.nav_start_time = self.get_clock().now()
         self.last_progress_time = self.get_clock().now()
         self.last_feedback_distance = None
@@ -546,11 +554,13 @@ class FrontierExplorer(Node):
         robot_x, robot_y, _ = self.get_robot_position()
         if robot_x is not None:
             self.current_goal_dir_yaw = math.atan2(y - robot_y, x - robot_x)
+            src_str = f"自 ({robot_x:.2f}, {robot_y:.2f})"
         else:
             self.current_goal_dir_yaw = None
+            src_str = "自未知位置"
 
         self.get_logger().info(
-            f'🚀 导航 → ({x:.2f}, {y:.2f}) [#{self.goals_sent}]')
+            f'🚀 导航 → ({x:.2f}, {y:.2f}) [#{self.goals_sent}] {src_str}')
 
         send_future = self.nav_client.send_goal_async(
             goal_msg, feedback_callback=self.nav_feedback_callback)
@@ -561,6 +571,8 @@ class FrontierExplorer(Node):
         if not goal_handle.accepted:
             self.get_logger().warn('⚠️ 目标被拒绝')
             self.blacklisted_goals.append(self.current_goal_xy)
+            if self.original_goal_xy is not None:
+                self.blacklisted_goals.append(self.original_goal_xy)
             self.is_navigating = False
             self.retry_count = 0
             return
@@ -572,11 +584,7 @@ class FrontierExplorer(Node):
 
     def nav_feedback_callback(self, feedback_msg):
         try:
-            remaining = feedback_msg.feedback.distance_remaining
-            if self.last_feedback_distance is not None:
-                if remaining < self.last_feedback_distance - 0.05:
-                    self.last_progress_time = self.get_clock().now()
-            self.last_feedback_distance = remaining
+            self.last_feedback_distance = feedback_msg.feedback.distance_remaining
         except Exception:
             pass
 
@@ -595,6 +603,8 @@ class FrontierExplorer(Node):
         elif status == 6:  # ABORTED
             self.get_logger().warn('⚠️ ABORTED，加入黑名单')
             self.blacklisted_goals.append(self.current_goal_xy)
+            if self.original_goal_xy is not None:
+                self.blacklisted_goals.append(self.original_goal_xy)
             self.retry_count = 0
         elif status == 5:  # CANCELED
             self.get_logger().info('ℹ️ 已取消')
@@ -604,10 +614,14 @@ class FrontierExplorer(Node):
             else:
                 self.get_logger().warn('⚠️ 重试依然无进展，加入黑名单')
                 self.blacklisted_goals.append(self.current_goal_xy)
+                if self.original_goal_xy is not None:
+                    self.blacklisted_goals.append(self.original_goal_xy)
                 self.retry_count = 0
         else:
             self.get_logger().warn(f'⚠️ 状态码: {status}，加入黑名单')
             self.blacklisted_goals.append(self.current_goal_xy)
+            if self.original_goal_xy is not None:
+                self.blacklisted_goals.append(self.original_goal_xy)
             self.retry_count = 0
         self.is_navigating = False
         self.current_goal_handle = None
