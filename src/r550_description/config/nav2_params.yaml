@@ -79,7 +79,7 @@ controller_server:
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
-    controller_patience: 3.0        # 增加控制器容忍度，在放弃前最多尝试 3.0 秒寻找有效路径
+    controller_patience: 5.0        # 给控制器更多时间找到有效轨迹
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]
@@ -87,8 +87,8 @@ controller_server:
     # 进度检查：确保小车在走，没有卡住
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.5   # Nav2 默认值：10 秒内移动 50cm 才算有进步
-      movement_time_allowance: 10.0   # Nav2 默认值：10 秒检测周期
+      required_movement_radius: 0.05   # 降低至 5cm，允许慢速旋转/微调
+      movement_time_allowance: 20.0   # 延长至 20 秒，给原地旋转预留足够时间
 
     # 目标判断：何时算到达终点
     general_goal_checker:
@@ -99,7 +99,15 @@ controller_server:
 
     # DWB 局部避障控制器
     FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
+      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      primary_controller: "dwb_core::DWBLocalPlanner"
+      angular_dist_threshold: 0.785
+      angular_disengage_threshold: 0.3925
+      forward_sampling_distance: 0.5
+      rotate_to_heading_angular_vel: 0.8
+      max_angular_accel: 3.2
+      simulate_ahead_time: 1.0
+      rotate_to_goal_heading: false
       debug_trajectory_details: True
       min_vel_x: 0.0
       max_vel_x: 0.3                 # 探索模式合理速度
@@ -125,7 +133,7 @@ controller_server:
       transform_tolerance: 0.2
       short_circuit_trajectory_evaluation: True   # 发现无效轨迹立即跳过，加快评估
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.02        # Nav2 默认值：低权重让通行优先，由 inflation 层保证安全距离
+      BaseObstacle.scale: 1.0         # 适度避障，防止刷墙/擦障碍物
       PathAlign.scale: 32.0           # Nav2 默认值
       GoalAlign.scale: 24.0           # Nav2 默认值
       PathDist.scale: 32.0            # Nav2 默认值
@@ -230,7 +238,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # Nav2 默认值：渐进衰减，通道中间有足够低代价空间
-        inflation_radius: 0.55       # Nav2 默认值：让全局路径规避障碍物留足裕量
+        inflation_radius: 0.3        # 让全局路径规避障碍物留足裕量
 
 local_costmap:
   local_costmap:
@@ -263,4 +271,4 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # Nav2 默认值
-        inflation_radius: 0.55       # Nav2 默认值
+        inflation_radius: 0.3        # 调低以允许顺利通过门洞
