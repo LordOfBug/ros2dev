@@ -108,8 +108,9 @@
                  - kd (damping) 设为 100：吸收震动
                  - minDepth 设为 0.001：允许穿透容差防卡死
                  - maxVel 设为 0.1：限制最大接触速度，稳定物理求解器 -->
-            <mu1>1.0</mu1>
-            <mu2>0.15</mu2>
+            <mu1>0.5</mu1>
+            <mu2>0.05</mu2>
+            <fdir1>1 0 0</fdir1>
             <kp>1000000.0</kp>
             <kd>100.0</kd>
             <minDepth>0.001</minDepth>
@@ -211,7 +212,7 @@
             <wheel_diameter>0.08</wheel_diameter>
             
             <!-- 限制最大扭矩以确保 Gazebo ODE 物理求解器稳定运行，防止关节瞬间撕裂或物理锁死 -->
-            <max_wheel_torque>2.0</max_wheel_torque>
+            <max_wheel_torque>15.0</max_wheel_torque>
             
             <publish_odom>true</publish_odom>
             <publish_odom_tf>true</publish_odom_tf>

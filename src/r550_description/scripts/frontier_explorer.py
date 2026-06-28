@@ -39,7 +39,7 @@ class FrontierExplorer(Node):
         self.declare_parameter('blacklist_radius', 0.5)        # 失败屏蔽半径（缩小以避免过度封锁）
         self.declare_parameter('update_interval', 2.0)
         self.declare_parameter('min_goal_distance', 0.5)      # 忽略太近的 frontier
-        self.declare_parameter('goal_offset', 0.3)             # 目标点偏移量（从 frontier 向 robot 方向）
+        self.declare_parameter('goal_offset', 0.5)             # 目标点偏移量（从 frontier 向 robot 方向）
         self.declare_parameter('no_progress_timeout', 25.0)    # 无进展超时
 
         self.min_frontier_size = self.get_parameter('min_frontier_size').value
@@ -265,10 +265,10 @@ class FrontierExplorer(Node):
                 yaw_diff = 2 * math.pi - yaw_diff
                 
             # 只有当位移 and 旋转都很小时，才认为卡阻并增加 stuck_ticks
-            if dist_moved < 0.01 and yaw_diff < 0.08:
+            if dist_moved < 0.04 and yaw_diff < 0.08:
                 self.stuck_ticks += 1
                 self.get_logger().warn(
-                    f'⚠️ 物理卡阻检测: 机器人几乎无位移和旋转 (移动 {dist_moved:.3f}m < 0.01m, 旋转 {yaw_diff:.3f}rad < 0.08rad)，stuck_ticks 增加至 {self.stuck_ticks}')
+                    f'⚠️ 物理卡阻检测: 机器人几乎无位移和旋转 (移动 {dist_moved:.3f}m < 0.04m, 旋转 {yaw_diff:.3f}rad < 0.08rad)，stuck_ticks 增加至 {self.stuck_ticks}')
             else:
                 if self.stuck_ticks > 0:
                     self.get_logger().info(
@@ -516,38 +516,42 @@ class FrontierExplorer(Node):
         # 此时我们无法沿质心射线朝机器人方向投影（距离极短），
         # 采用"左手法则"(Left-Hand Rule)：从车头正前方开始，以固定逆时针方向（左转）
         # 每次偏转 30° 扫描，优先选择车头前方，然后依次向左旋转寻找安全目标。
-        # 这保证了在对称/环形空间中始终以固定旋转方向打破僵局，类似迷宫探索中的左手法则。
         if dist < 0.35:
             yaw = robot_yaw if robot_yaw is not None else 0.0
             sweep_step = math.radians(30)  # 每步 30°
             sweep_count = 12               # 360° / 30° = 12 步，覆盖完整一圈
-            self.get_logger().info(f'🔄 左手法则启动: frontier ({fx:.2f}, {fy:.2f}) 距车仅 {dist:.2f}m，从车头朝向 {math.degrees(yaw):.0f}° 开始逆时针扫描')
+            self.get_logger().info(f'🔄 左手法则启动: frontier ({fx:.2f}, {fy:.2f}) 距车仅 {dist:.2f}m，开始两阶段自适应安全扫描')
+            
+            # 阶段 1：尝试开阔安全距离 (radius=8, 0.40m)
             for i in range(sweep_count):
-                target_angle = yaw + i * sweep_step  # 逆时针扫描 (0°, +30°, +60°, ... +330°)
+                target_angle = yaw + i * sweep_step
                 tx = robot_x + 1.0 * math.cos(target_angle)
                 ty = robot_y + 1.0 * math.sin(target_angle)
-
                 col = int((tx - ox) / res)
                 row = int((ty - oy) / res)
-
                 if 0 <= col < w and 0 <= row < h:
-                    cell_val = grid[row, col]
-                    if cell_val == 0:
-                        if self.is_cell_safe(row, col, grid, w, h, radius=5, allow_unknown=allow_unknown):
-                            self.get_logger().info(f'  ✅ 左手法则: 偏转 {i*30}° → ({tx:.2f}, {ty:.2f}) 安全可达')
+                    if grid[row, col] == 0:
+                        if self.is_cell_safe(row, col, grid, w, h, radius=8, allow_unknown=allow_unknown):
+                            self.get_logger().info(f'  ✅ 左手法则 (阶段1:开阔) → ({tx:.2f}, {ty:.2f}) 安全可达')
                             return tx, ty
-                        else:
-                            self.get_logger().info(f'  ❌ 左手法则: 偏转 {i*30}° → ({tx:.2f}, {ty:.2f}) free但周围不安全')
-                    else:
-                        self.get_logger().info(f'  ❌ 左手法则: 偏转 {i*30}° → ({tx:.2f}, {ty:.2f}) 非free区 (值={cell_val})')
-                else:
-                    self.get_logger().info(f'  ❌ 左手法则: 偏转 {i*30}° → ({tx:.2f}, {ty:.2f}) 超出地图边界')
-            self.get_logger().warn(f'  ⚠️ 左手法则: 360° 扫描完毕，未找到安全目标')
+
+            # 阶段 2：回退到保守安全距离 (radius=5, 0.25m)
+            for i in range(sweep_count):
+                target_angle = yaw + i * sweep_step
+                tx = robot_x + 1.0 * math.cos(target_angle)
+                ty = robot_y + 1.0 * math.sin(target_angle)
+                col = int((tx - ox) / res)
+                row = int((ty - oy) / res)
+                if 0 <= col < w and 0 <= row < h:
+                    if grid[row, col] == 0:
+                        if self.is_cell_safe(row, col, grid, w, h, radius=5, allow_unknown=allow_unknown):
+                            self.get_logger().info(f'  ✅ 左手法则 (阶段2:保守) → ({tx:.2f}, {ty:.2f}) 安全可达')
+                            return tx, ty
+            
+            self.get_logger().warn(f'  ⚠️ 左手法则: 两阶段扫描完毕，未找到安全目标')
             return None
 
         # 从 frontier 向 robot 方向画射线
-
-        # 将 frontier 世界坐标转为网格坐标
         f_col = int((fx - ox) / res)
         f_row = int((fy - oy) / res)
 
@@ -556,16 +560,32 @@ class FrontierExplorer(Node):
         if 0 <= f_col < w and 0 <= f_row < h:
             has_walls = self.has_obstacles_nearby(f_row, f_col, grid, w, h, radius=16)
 
-        # 开阔未知区域：目标点可直接设在 frontier 边缘 (0.0m) 且安全区可包含未知元素 (-1)
-        # 靠近障碍物区域：目标点保守回退 (0.3m)，安全区必须全是已知 free (0)，但我们现在总是 allow_unknown=True
-        # 以防启动时因为四周是未知区域导致无法定位目标点
         if not has_walls:
             min_offset = 0.0
         else:
             min_offset = self.goal_offset
         allow_unknown = True
 
-        # 在 range(min_offset, 1.5m) 之间以 0.05m 步长寻找满足安全条件的点
+        # 阶段 1：尝试开阔安全距离 (radius=8, 0.40m)
+        res_goal = self._find_safe_point_on_ray(fx, fy, dx, dy, dist, min_offset, grid, info, radius=8, allow_unknown=allow_unknown)
+        if res_goal is not None:
+            self.get_logger().info(f'  ✅ 射线投影 (阶段1:开阔) → ({res_goal[0]:.2f}, {res_goal[1]:.2f}) 安全可达')
+            return res_goal
+
+        # 阶段 2：回退到保守安全距离 (radius=5, 0.25m)
+        res_goal = self._find_safe_point_on_ray(fx, fy, dx, dy, dist, min_offset, grid, info, radius=5, allow_unknown=allow_unknown)
+        if res_goal is not None:
+            self.get_logger().info(f'  ✅ 射线投影 (阶段2:保守) → ({res_goal[0]:.2f}, {res_goal[1]:.2f}) 安全可达')
+            return res_goal
+
+        return None
+
+    def _find_safe_point_on_ray(self, fx, fy, dx, dy, dist, min_offset, grid, info, radius, allow_unknown):
+        w, h = info.width, info.height
+        res = info.resolution
+        ox = info.origin.position.x
+        oy = info.origin.position.y
+
         step_size = 0.05
         max_offset = 1.5
         steps = int((max_offset - min_offset) / step_size) + 1
@@ -581,9 +601,8 @@ class FrontierExplorer(Node):
             row = int((ty - oy) / res)
 
             if 0 <= col < w and 0 <= row < h:
-                # 目标点本身必须是已探索 of the free area (0)
                 if grid[row, col] == 0:
-                    if self.is_cell_safe(row, col, grid, w, h, radius=5, allow_unknown=allow_unknown):
+                    if self.is_cell_safe(row, col, grid, w, h, radius=radius, allow_unknown=allow_unknown):
                         return tx, ty
         return None
 

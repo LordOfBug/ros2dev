@@ -109,15 +109,15 @@ controller_server:
       simulate_ahead_time: 1.0
       rotate_to_goal_heading: false
       debug_trajectory_details: True
-      min_vel_x: 0.08
-      max_vel_x: 0.3                 # 探索模式合理速度
+      min_vel_x: 0.15
+      max_vel_x: 0.4                 # 探索模式合理速度
       min_vel_y: 0.0
       max_vel_y: 0.0
       min_vel_theta: -1.0            # 允许双向转弯 (rad/s)
       max_vel_theta: 1.0             # 最大转弯速度 (rad/s)
-      min_speed_xy: 0.08
-      max_speed_xy: 0.3
-      min_speed_theta: 0.0
+      min_speed_xy: 0.15
+      max_speed_xy: 0.4
+      min_speed_theta: 0.4
       acc_lim_x: 2.5                 # Nav2 默认加速度
       acc_lim_y: 0.0
       acc_lim_theta: 3.2             # Nav2 默认角加速度
