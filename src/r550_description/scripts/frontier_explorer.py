@@ -73,6 +73,8 @@ class FrontierExplorer(Node):
         self.last_preempt_time = None        # 上次动态抢占切换目标的时间（用于冷却限制）
         self.is_backing_up = False           # 是否正在进行后退脱困动作
         self.backup_ticks_remaining = 0      # 剩余后退 tick 数 (10Hz)
+        self.just_recovered = False          # 刚从卡阻后退恢复（下次选目标时优先选朝向一致的）
+        self.startup_clearance_done = False   # 启动时是否已完成前方间隙检查
 
         # ===================== ROS 通信 =====================
         self.map_sub = self.create_subscription(
@@ -108,6 +110,34 @@ class FrontierExplorer(Node):
         robot_x, robot_y, robot_yaw = self.get_robot_position()
         if robot_x is None:
             return
+
+        # ===================== 启动前间隙检查 =====================
+        # 仅在首次发送目标前执行一次：如果车头正前方有墙/障碍物 (< 0.25m)，
+        # 先主动后退创建转向空间，确保左手法则扫描到侧向目标后机器人能安全旋转。
+        if not self.startup_clearance_done and self.goals_sent == 0:
+            self.startup_clearance_done = True
+            if self.current_map is not None and robot_yaw is not None:
+                info = self.current_map.info
+                grid = np.array(self.current_map.data, dtype=np.int8).reshape(info.height, info.width)
+                front_blocked = False
+                for check_dist in [0.15, 0.20, 0.25]:
+                    check_x = robot_x + check_dist * math.cos(robot_yaw)
+                    check_y = robot_y + check_dist * math.sin(robot_yaw)
+                    col = int((check_x - info.origin.position.x) / info.resolution)
+                    row = int((check_y - info.origin.position.y) / info.resolution)
+                    if 0 <= col < info.width and 0 <= row < info.height:
+                        if self.has_obstacles_nearby(row, col, grid, info.width, info.height, radius=2):
+                            front_blocked = True
+                            self.get_logger().warn(
+                                f'🔙 启动间隙检查: 车头前方 {check_dist:.2f}m 处检测到障碍物，先后退创建转向空间')
+                            break
+                if front_blocked:
+                    self.is_backing_up = True
+                    self.backup_ticks_remaining = 15  # 1.5 秒后退
+                    self.just_recovered = True  # 后退完成后优先选车头方向的目标
+                    return
+                else:
+                    self.get_logger().info('✅ 启动间隙检查: 车头前方空间充足，无需后退')
 
         # 如果正在导航，检查进度并支持运动中重新规划
         if self.is_navigating:
@@ -202,6 +232,7 @@ class FrontierExplorer(Node):
                 stop_msg = Twist()
                 self.cmd_vel_pub.publish(stop_msg)
                 self.is_backing_up = False
+                self.just_recovered = True  # 标记刚恢复，下次选目标时优先选朝向一致的
                 self.get_logger().info('✅ 后退脱困完成，机器人已安全拉开距离，恢复探索流程。')
 
     # ===================== 导航进度监控 =====================
@@ -399,7 +430,7 @@ class FrontierExplorer(Node):
                     continue
 
             # 2. 投影出安全的 free_space 目标点
-            safe_goal = self.get_safe_projected_goal(fx, fy, robot_x, robot_y, grid, info)
+            safe_goal = self.get_safe_projected_goal(fx, fy, robot_x, robot_y, robot_yaw, grid, info)
             if safe_goal is None:
                 self.get_logger().info(f'{f_prefix} 过滤: 无法在该 frontier 附近投影出安全的自由空间目标点')
                 continue
@@ -428,8 +459,13 @@ class FrontierExplorer(Node):
                 diff_yaw = abs(math.atan2(math.sin(frontier_yaw - robot_yaw), math.cos(frontier_yaw - robot_yaw)))
                 heading_factor = math.cos(diff_yaw)
                 if heading_factor > 0.0:
-                    heading_bonus = 4.0 * heading_factor  # 同方向最高加 4 分
+                    # 刚从卡阻恢复时，大幅提升朝向权重（20分），避免选需要大转弯的目标导致贴墙再次卡死
+                    bonus_weight = 20.0 if self.just_recovered else 4.0
+                    heading_bonus = bonus_weight * heading_factor
                     score += heading_bonus
+                elif self.just_recovered:
+                    # 刚恢复且目标在身后 → 重罚，防止选需要 180° 转弯的目标
+                    score -= 15.0
 
             # 就近探索加分：如果上次成功到达某处，3m 内的 frontier 得 50% 加分
             if self.last_success_xy is not None:
@@ -449,6 +485,7 @@ class FrontierExplorer(Node):
 
         if not candidates:
             self.get_logger().warn('⚠️ 规划结束: 无可用 candidate frontiers！')
+            self.just_recovered = False
             return None
 
         candidates.sort(key=lambda c: c[6], reverse=True)
@@ -456,22 +493,59 @@ class FrontierExplorer(Node):
 
         self.get_logger().info(
             f'🎯 规划胜出: frontier ({fx:.2f}, {fy:.2f}) 规模={size}, 距离={goal_dist:.2f}m, '
-            f'最高分={score:.2f} → 最终目标点 ({goal_x:.2f}, {goal_y:.2f})')
+            f'最高分={score:.2f} → 最终目标点 ({goal_x:.2f}, {goal_y:.2f})'
+            f'{" [恢复模式: 优先朝向]" if self.just_recovered else ""}')
         self.current_frontier_xy = (fx, fy)  # 记住 frontier 中心用于重试
+        self.just_recovered = False  # 重置恢复标记
         return (goal_x, goal_y, size)
 
-    def get_safe_projected_goal(self, fx, fy, robot_x, robot_y, grid, info):
+    def get_safe_projected_goal(self, fx, fy, robot_x, robot_y, robot_yaw, grid, info):
         w, h = info.width, info.height
         res = info.resolution
         ox = info.origin.position.x
         oy = info.origin.position.y
 
-        # 从 frontier 向 robot 方向画射线
+        # 计算机器人到 frontier centroid 的距离
         dx = robot_x - fx
         dy = robot_y - fy
         dist = math.hypot(dx, dy)
-        if dist < 0.01:
-            return fx, fy
+
+        allow_unknown = True
+
+        # 如果距离过近 (说明 frontier 环绕着机器人，例如初始状态)
+        # 此时我们无法沿质心射线朝机器人方向投影（距离极短），
+        # 采用"左手法则"(Left-Hand Rule)：从车头正前方开始，以固定逆时针方向（左转）
+        # 每次偏转 30° 扫描，优先选择车头前方，然后依次向左旋转寻找安全目标。
+        # 这保证了在对称/环形空间中始终以固定旋转方向打破僵局，类似迷宫探索中的左手法则。
+        if dist < 0.35:
+            yaw = robot_yaw if robot_yaw is not None else 0.0
+            sweep_step = math.radians(30)  # 每步 30°
+            sweep_count = 12               # 360° / 30° = 12 步，覆盖完整一圈
+            self.get_logger().info(f'🔄 左手法则启动: frontier ({fx:.2f}, {fy:.2f}) 距车仅 {dist:.2f}m，从车头朝向 {math.degrees(yaw):.0f}° 开始逆时针扫描')
+            for i in range(sweep_count):
+                target_angle = yaw + i * sweep_step  # 逆时针扫描 (0°, +30°, +60°, ... +330°)
+                tx = robot_x + 1.0 * math.cos(target_angle)
+                ty = robot_y + 1.0 * math.sin(target_angle)
+
+                col = int((tx - ox) / res)
+                row = int((ty - oy) / res)
+
+                if 0 <= col < w and 0 <= row < h:
+                    cell_val = grid[row, col]
+                    if cell_val == 0:
+                        if self.is_cell_safe(row, col, grid, w, h, radius=5, allow_unknown=allow_unknown):
+                            self.get_logger().info(f'  ✅ 左手法则: 偏转 {i*30}° → ({tx:.2f}, {ty:.2f}) 安全可达')
+                            return tx, ty
+                        else:
+                            self.get_logger().info(f'  ❌ 左手法则: 偏转 {i*30}° → ({tx:.2f}, {ty:.2f}) free但周围不安全')
+                    else:
+                        self.get_logger().info(f'  ❌ 左手法则: 偏转 {i*30}° → ({tx:.2f}, {ty:.2f}) 非free区 (值={cell_val})')
+                else:
+                    self.get_logger().info(f'  ❌ 左手法则: 偏转 {i*30}° → ({tx:.2f}, {ty:.2f}) 超出地图边界')
+            self.get_logger().warn(f'  ⚠️ 左手法则: 360° 扫描完毕，未找到安全目标')
+            return None
+
+        # 从 frontier 向 robot 方向画射线
 
         # 将 frontier 世界坐标转为网格坐标
         f_col = int((fx - ox) / res)
