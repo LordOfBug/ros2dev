@@ -17,7 +17,7 @@ def generate_launch_description():
             'robot_frame': 'base_footprint',
             'blacklist_radius': 0.5,      # 失败目标屏蔽半径（米）
             'update_interval': 2.0,       # 地图分析间隔（秒）
-            'min_goal_distance': 1.0,     # 跳过距离太近的 frontier（米）
+            'min_goal_distance': 0.35,    # 跳过距离太近的 frontier（米）
             'goal_offset': 0.5,           # 目标从 frontier 向机器人方向偏移（米）
         }]
     )

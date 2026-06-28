@@ -447,25 +447,20 @@ class FrontierExplorer(Node):
                 self.get_logger().info(f'{f_prefix} 过滤: 投影目标点距离过近 ({goal_dist:.2f}m，最小限制: {max(self.min_goal_distance, 0.35):.2f}m)')
                 continue
 
-            # 基础分 (大小与距离)
-            base_score = math.log2(max(size, 2)) * 2.0 - goal_dist
+            # 基础分 (大小与距离) — 降低 size 权重 (2.0 -> 0.2)，使距离成为主导因素，确保就近清理
+            base_score = math.log2(max(size, 2)) * 0.2 - goal_dist
             score = base_score
             heading_bonus = 0.0
             nearby_boost = False
 
-            # 朝向加分（如果目标在当前前进方向上，给予额外加分以减少原地转向）
+            # 朝向加分（连续余弦奖励，强烈鼓励沿前进方向探索，惩罚身后目标以避免频繁原地掉头）
             if robot_yaw is not None:
                 frontier_yaw = math.atan2(fy - robot_y, fx - robot_x)
-                diff_yaw = abs(math.atan2(math.sin(frontier_yaw - robot_yaw), math.cos(frontier_yaw - robot_yaw)))
+                diff_yaw = math.atan2(math.sin(frontier_yaw - robot_yaw), math.cos(frontier_yaw - robot_yaw))
                 heading_factor = math.cos(diff_yaw)
-                if heading_factor > 0.0:
-                    # 刚从卡阻恢复时，大幅提升朝向权重（20分），避免选需要大转弯的目标导致贴墙再次卡死
-                    bonus_weight = 20.0 if self.just_recovered else 4.0
-                    heading_bonus = bonus_weight * heading_factor
-                    score += heading_bonus
-                elif self.just_recovered:
-                    # 刚恢复且目标在身后 → 重罚，防止选需要 180° 转弯的目标
-                    score -= 15.0
+                bonus_weight = 20.0 if self.just_recovered else 8.0
+                heading_bonus = bonus_weight * heading_factor
+                score += heading_bonus
 
             # 就近探索加分：如果上次成功到达某处，3m 内的 frontier 得 50% 加分
             if self.last_success_xy is not None:
@@ -505,7 +500,7 @@ class FrontierExplorer(Node):
         ox = info.origin.position.x
         oy = info.origin.position.y
 
-        # 计算机器人到 frontier centroid 的距离
+        # 计算机器人到 frontier centroid 的距离和方向
         dx = robot_x - fx
         dy = robot_y - fy
         dist = math.hypot(dx, dy)
@@ -513,13 +508,10 @@ class FrontierExplorer(Node):
         allow_unknown = True
 
         # 如果距离过近 (说明 frontier 环绕着机器人，例如初始状态)
-        # 此时我们无法沿质心射线朝机器人方向投影（距离极短），
-        # 采用"左手法则"(Left-Hand Rule)：从车头正前方开始，以固定逆时针方向（左转）
-        # 每次偏转 30° 扫描，优先选择车头前方，然后依次向左旋转寻找安全目标。
         if dist < 0.35:
             yaw = robot_yaw if robot_yaw is not None else 0.0
             sweep_step = math.radians(30)  # 每步 30°
-            sweep_count = 12               # 360° / 30° = 12 步，覆盖完整一圈
+            sweep_count = 12               # 360° / 30° = 12 步
             self.get_logger().info(f'🔄 左手法则启动: frontier ({fx:.2f}, {fy:.2f}) 距车仅 {dist:.2f}m，开始两阶段自适应安全扫描')
             
             # 阶段 1：尝试开阔安全距离 (radius=8, 0.40m)
@@ -551,11 +543,9 @@ class FrontierExplorer(Node):
             self.get_logger().warn(f'  ⚠️ 左手法则: 两阶段扫描完毕，未找到安全目标')
             return None
 
-        # 从 frontier 向 robot 方向画射线
+        # 检查 frontier 周围 0.8m (16像素) 内是否有障碍物
         f_col = int((fx - ox) / res)
         f_row = int((fy - oy) / res)
-
-        # 检查 frontier 周围 0.8m (16像素) 内是否有障碍物 (100)
         has_walls = False
         if 0 <= f_col < w and 0 <= f_row < h:
             has_walls = self.has_obstacles_nearby(f_row, f_col, grid, w, h, radius=16)
@@ -563,39 +553,66 @@ class FrontierExplorer(Node):
         if not has_walls:
             min_offset = 0.0
         else:
-            min_offset = self.goal_offset
-        allow_unknown = True
+            min_offset = 0.20  # 允许在有墙体/障碍物时使用较小的 offset (0.20m)，以便把目标设在窄通道内
+
+        # 多角度偏转射线扫描列表 (从 0° 展开到 ±180°)
+        angle_offsets = [
+            0.0,
+            math.radians(45), math.radians(-45),
+            math.radians(90), math.radians(-90),
+            math.radians(135), math.radians(-135),
+            math.radians(180)
+        ]
 
         # 阶段 1：尝试开阔安全距离 (radius=8, 0.40m)
-        res_goal = self._find_safe_point_on_ray(fx, fy, dx, dy, dist, min_offset, grid, info, radius=8, allow_unknown=allow_unknown)
-        if res_goal is not None:
-            self.get_logger().info(f'  ✅ 射线投影 (阶段1:开阔) → ({res_goal[0]:.2f}, {res_goal[1]:.2f}) 安全可达')
-            return res_goal
+        for angle in angle_offsets:
+            # 旋转朝向机器人的方向向量
+            c, s = math.cos(angle), math.sin(angle)
+            rx = dx * c - dy * s
+            ry = dx * s + dy * c
+            
+            res_goal = self._find_safe_point_on_ray(fx, fy, rx, ry, dist, min_offset, grid, info, radius=8, allow_unknown=allow_unknown)
+            if res_goal is not None:
+                self.get_logger().info(f'  ✅ 射线投影 (阶段1:开阔, 偏角:{math.degrees(angle):.1f}°) → ({res_goal[0]:.2f}, {res_goal[1]:.2f}) 安全可达')
+                return res_goal
 
         # 阶段 2：回退到保守安全距离 (radius=5, 0.25m)
-        res_goal = self._find_safe_point_on_ray(fx, fy, dx, dy, dist, min_offset, grid, info, radius=5, allow_unknown=allow_unknown)
-        if res_goal is not None:
-            self.get_logger().info(f'  ✅ 射线投影 (阶段2:保守) → ({res_goal[0]:.2f}, {res_goal[1]:.2f}) 安全可达')
-            return res_goal
+        for angle in angle_offsets:
+            # 旋转朝向机器人的方向向量
+            c, s = math.cos(angle), math.sin(angle)
+            rx = dx * c - dy * s
+            ry = dx * s + dy * c
+            
+            res_goal = self._find_safe_point_on_ray(fx, fy, rx, ry, dist, min_offset, grid, info, radius=5, allow_unknown=allow_unknown)
+            if res_goal is not None:
+                self.get_logger().info(f'  ✅ 射线投影 (阶段2:保守, 偏角:{math.degrees(angle):.1f}°) → ({res_goal[0]:.2f}, {res_goal[1]:.2f}) 安全可达')
+                return res_goal
 
         return None
 
-    def _find_safe_point_on_ray(self, fx, fy, dx, dy, dist, min_offset, grid, info, radius, allow_unknown):
+    def _find_safe_point_on_ray(self, fx, fy, rx, ry, dist, min_offset, grid, info, radius, allow_unknown):
         w, h = info.width, info.height
         res = info.resolution
         ox = info.origin.position.x
         oy = info.origin.position.y
 
+        # 动态计算 actual_min_offset，防止当机器人靠近 frontier (dist 很小) 时，由于 dist - 0.20m < min_offset 导致搜索范围为空
+        actual_min_offset = min(min_offset, max(0.0, dist - 0.20))
+
         step_size = 0.05
         max_offset = 1.5
-        steps = int((max_offset - min_offset) / step_size) + 1
+        steps = int((max_offset - actual_min_offset) / step_size) + 1
+
+        norm = math.hypot(rx, ry)
+        if norm < 0.01:
+            return None
 
         for step in range(steps):
-            offset = min_offset + step * step_size
-            if offset > dist - 0.35:
+            offset = actual_min_offset + step * step_size
+            if offset > dist - 0.20:
                 break
-            tx = fx + (dx / dist) * offset
-            ty = fy + (dy / dist) * offset
+            tx = fx + (rx / norm) * offset
+            ty = fy + (ry / norm) * offset
 
             col = int((tx - ox) / res)
             row = int((ty - oy) / res)
