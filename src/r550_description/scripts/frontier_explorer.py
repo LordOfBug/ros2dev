@@ -693,11 +693,23 @@ class FrontierExplorer(Node):
             self.get_logger().info(
                 f'✅ 到达！({self.goals_succeeded}/{self.goals_sent})')
         elif status == 6:  # ABORTED
-            self.get_logger().warn('⚠️ ABORTED，加入黑名单')
-            self.blacklisted_goals.append(self.current_goal_xy)
-            if self.original_goal_xy is not None:
-                self.blacklisted_goals.append(self.original_goal_xy)
-            self.retry_count = 0
+            self.get_logger().warn('⚠️ 导航被终止 (ABORTED)！通常是由于前方遇障且控制器无有效轨迹。立即启动后退避障并加入黑名单。')
+            if self.current_goal_xy is not None:
+                self.blacklisted_goals.append(self.current_goal_xy)
+                if self.original_goal_xy is not None:
+                    self.blacklisted_goals.append(self.original_goal_xy)
+            # 获取机器人当前位置并加入黑名单，防止原地规划
+            robot_x, robot_y, _ = self.get_robot_position()
+            if robot_x is not None:
+                self.blacklisted_goals.append((robot_x, robot_y))
+            self.retry_count = 2  # 直接跳过重试，开始寻找全新区域
+            self.is_navigating = False
+            self.current_goal_handle = None
+            
+            # 立即触发 1.5 秒的主动后退避障动作
+            self.is_backing_up = True
+            self.backup_ticks_remaining = 15
+            return
         elif status == 5:  # CANCELED
             self.get_logger().info('ℹ️ 已取消')
             if self.retry_count == 0:

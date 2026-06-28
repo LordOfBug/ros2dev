@@ -79,7 +79,7 @@ controller_server:
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
-    controller_patience: 5.0        # 给控制器更多时间找到有效轨迹
+    controller_patience: 1.5        # 降低等待时间，遇障快速报错以便探索节点快速响应
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]

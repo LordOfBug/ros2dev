@@ -29,10 +29,9 @@ def generate_launch_description():
         description='Full path to the ROS2 parameters file to use for all launched nodes'
     )
 
-    # 5. 引入 Nav2 官方的核心导航组装线 (navigation_launch.py)
-    # 它会自动拉起：控制器服务器、规划器服务器、行为树导航器、恢复行为服务器等。
-    # 因为我们使用 SLAM 模式，所以只启动核心导航节点。
-    # 地图服务由 r550_slam.launch.py (mapping) 或 r550_slam_loc.launch.py (localization) 提供。
+    # 5. 动态解析自定义无恢复行为树 XML 路径并传给 navigation_launch.py
+    default_bt_xml_path = os.path.join(pkg_share, 'config', 'navigate_to_pose_no_recovery.xml')
+
     launch_navigation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(nav2_bringup_share, 'launch', 'navigation_launch.py')
@@ -40,6 +39,7 @@ def generate_launch_description():
         launch_arguments={
             'use_sim_time': LaunchConfiguration('use_sim_time'),
             'params_file': LaunchConfiguration('params_file'),
+            'default_bt_xml_filename': default_bt_xml_path,
             'use_lifecycle_mgr': 'true'
         }.items()
     )
