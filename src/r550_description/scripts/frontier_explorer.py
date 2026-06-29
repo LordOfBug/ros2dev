@@ -543,19 +543,7 @@ class FrontierExplorer(Node):
             self.get_logger().warn(f'  ⚠️ 左手法则: 两阶段扫描完毕，未找到安全目标')
             return None
 
-        # 检查 frontier 周围 0.8m (16像素) 内是否有障碍物
-        f_col = int((fx - ox) / res)
-        f_row = int((fy - oy) / res)
-        has_walls = False
-        if 0 <= f_col < w and 0 <= f_row < h:
-            has_walls = self.has_obstacles_nearby(f_row, f_col, grid, w, h, radius=16)
-
-        if not has_walls:
-            min_offset = 0.0
-        else:
-            min_offset = 0.20  # 允许在有墙体/障碍物时使用较小的 offset (0.20m)，以便把目标设在窄通道内
-
-        # 多角度偏转射线扫描列表 (从 0° 展开到 ±180°)
+        # 多角度单阶段扫描：对每个方向执行 3 步判定
         angle_offsets = [
             0.0,
             math.radians(45), math.radians(-45),
@@ -563,65 +551,83 @@ class FrontierExplorer(Node):
             math.radians(135), math.radians(-135),
             math.radians(180)
         ]
-
-        # 阶段 1：尝试开阔安全距离 (radius=8, 0.40m)
-        for angle in angle_offsets:
-            # 旋转朝向机器人的方向向量
-            c, s = math.cos(angle), math.sin(angle)
-            rx = dx * c - dy * s
-            ry = dx * s + dy * c
-            
-            res_goal = self._find_safe_point_on_ray(fx, fy, rx, ry, dist, min_offset, grid, info, radius=8, allow_unknown=allow_unknown)
-            if res_goal is not None:
-                self.get_logger().info(f'  ✅ 射线投影 (阶段1:开阔, 偏角:{math.degrees(angle):.1f}°) → ({res_goal[0]:.2f}, {res_goal[1]:.2f}) 安全可达')
-                return res_goal
-
-        # 阶段 2：回退到保守安全距离 (radius=5, 0.25m)
-        for angle in angle_offsets:
-            # 旋转朝向机器人的方向向量
-            c, s = math.cos(angle), math.sin(angle)
-            rx = dx * c - dy * s
-            ry = dx * s + dy * c
-            
-            res_goal = self._find_safe_point_on_ray(fx, fy, rx, ry, dist, min_offset, grid, info, radius=5, allow_unknown=allow_unknown)
-            if res_goal is not None:
-                self.get_logger().info(f'  ✅ 射线投影 (阶段2:保守, 偏角:{math.degrees(angle):.1f}°) → ({res_goal[0]:.2f}, {res_goal[1]:.2f}) 安全可达')
-                return res_goal
-
-        return None
-
-    def _find_safe_point_on_ray(self, fx, fy, rx, ry, dist, min_offset, grid, info, radius, allow_unknown):
-        w, h = info.width, info.height
-        res = info.resolution
-        ox = info.origin.position.x
-        oy = info.origin.position.y
-
-        # 动态计算 actual_min_offset，防止当机器人靠近 frontier (dist 很小) 时，由于 dist - 0.20m < min_offset 导致搜索范围为空
-        actual_min_offset = min(min_offset, max(0.0, dist - 0.20))
-
         step_size = 0.05
-        max_offset = 1.5
-        steps = int((max_offset - actual_min_offset) / step_size) + 1
+        max_search = min(1.5, dist - 0.20)
+        min_clearance_cells = 5  # 0.25m (5 cells × 0.05m/cell)
+        clearance_dirs = [
+            (1, 0), (-1, 0), (0, 1), (0, -1),
+            (1, 1), (1, -1), (-1, 1), (-1, -1)
+        ]
 
-        norm = math.hypot(rx, ry)
-        if norm < 0.01:
-            return None
+        for angle in angle_offsets:
+            c, s = math.cos(angle), math.sin(angle)
+            rx = dx * c - dy * s
+            ry = dx * s + dy * c
+            norm = math.hypot(rx, ry)
+            if norm < 0.01:
+                continue
 
-        for step in range(steps):
-            offset = actual_min_offset + step * step_size
-            if offset > dist - 0.20:
-                break
-            tx = fx + (rx / norm) * offset
-            ty = fy + (ry / norm) * offset
+            # Step 1: 沿射线找到第一个 free cell 作为候选目标
+            candidate = None
+            offset = step_size
+            while offset <= max_search:
+                tx = fx + (rx / norm) * offset
+                ty = fy + (ry / norm) * offset
+                col = int((tx - ox) / res)
+                row = int((ty - oy) / res)
+                if 0 <= col < w and 0 <= row < h and grid[row, col] == 0:
+                    candidate = (tx, ty, col, row, offset)
+                    break
+                offset += step_size
 
-            col = int((tx - ox) / res)
-            row = int((ty - oy) / res)
+            if candidate is None:
+                continue  # 这个方向没有 free cell，换方向
 
-            if 0 <= col < w and 0 <= row < h:
-                if grid[row, col] == 0:
-                    if self.is_cell_safe(row, col, grid, w, h, radius=radius, allow_unknown=allow_unknown):
-                        return tx, ty
-        return None
+            tx, ty, cand_col, cand_row, cand_offset = candidate
+
+            # Step 2: 候选点安全性检查 → 安全则直接接受，否则尝试推回
+            if self.is_cell_safe(cand_row, cand_col, grid, w, h, radius=5, allow_unknown=allow_unknown):
+                self.get_logger().info(
+                    f'  ✅ 投影 (偏角:{math.degrees(angle):.1f}°) → ({tx:.2f}, {ty:.2f}) 安全可达')
+                return tx, ty
+
+            # 太靠近障碍物 → 沿射线继续推回，寻找安全位置
+            pushed = None
+            push_offset = cand_offset + step_size
+            while push_offset <= max_search:
+                ptx = fx + (rx / norm) * push_offset
+                pty = fy + (ry / norm) * push_offset
+                pcol = int((ptx - ox) / res)
+                prow = int((pty - oy) / res)
+                if 0 <= pcol < w and 0 <= prow < h and grid[prow, pcol] == 0:
+                    if self.is_cell_safe(prow, pcol, grid, w, h, radius=5, allow_unknown=allow_unknown):
+                        pushed = (ptx, pty)
+                        break
+                push_offset += step_size
+
+            if pushed is not None:
+                self.get_logger().info(
+                    f'  ✅ 推回 (偏角:{math.degrees(angle):.1f}°) → ({pushed[0]:.2f}, {pushed[1]:.2f}) 推回后安全')
+                return pushed
+
+            # Step 3: 推回失败 → 检查候选点在任意方向是否有足够通行空间
+            # 有通行空间则 Nav2 可规划局部路径到达，直接接受
+            for dcc, drc in clearance_dirs:
+                clear = True
+                for step in range(1, min_clearance_cells + 1):
+                    cc = cand_col + dcc * step
+                    cr = cand_row + drc * step
+                    if not (0 <= cc < w and 0 <= cr < h):
+                        clear = False
+                        break
+                    if grid[cr, cc] == 100:
+                        clear = False
+                        break
+                if clear:
+                    self.get_logger().info(
+                        f'  ✅ 方向通行 (偏角:{math.degrees(angle):.1f}°) → ({tx:.2f}, {ty:.2f}) '
+                        f'推回失败但方向({dcc},{drc})有通行空间，直接接受')
+                    return tx, ty
 
     def has_obstacles_nearby(self, center_row, center_col, grid, w, h, radius):
         r_start = max(0, center_row - radius)
