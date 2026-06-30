@@ -8,11 +8,28 @@ Run the download script from the host to download all 6 required repositories in
 ./download_assets.sh
 ```
 
-### 2. Build the Docker Image
-Once the archives are downloaded under `assets/`, run the build command. The Dockerfile will copy and compile them entirely offline:
+### 2. Configure Your Host for Emulated Build (Avoid Emulation Linker Segfaults)
+QEMU user-mode emulation has a known issue where host Address Space Layout Randomization (ASLR) collides with the guest VM's memory maps, causing random compiler/linker segmentation faults during multi-threaded compiles.
+To compile in parallel at full speed using multiple jobs, perform these host setup steps:
+
+1. **Install the modern, official QEMU binfmt handlers:**
+   ```bash
+   docker run --privileged --rm tonistiigi/binfmt --uninstall qemu-*
+   docker run --privileged --rm tonistiigi/binfmt --install all
+   ```
+2. **Temporarily disable ASLR on the host machine before starting the build:**
+   ```bash
+   sudo sysctl kernel.randomize_va_space=0
+   ```
+   *(Note: Remember to re-enable it by setting it back to `2` once your build completes).*
+
+### 3. Build the Docker Image
+Once the host is configured and the archives are downloaded under `assets/`, run the build command:
 ```bash
 docker buildx build --platform linux/arm64 -t r550-ros1-bridge:latest .
 ```
+
+*Tip: If you prefer to completely avoid QEMU emulation overhead, you can configure your host to build natively on the robot's physical ARM64 CPU. See the remote context instructions in the [r550-humble-bot README](../r550-humble-bot/README.md#alternative-native-remote-builds-recommended-for-speed).*
 
 ---
 
@@ -83,3 +100,12 @@ source /control_msgs_ros1/install/setup.bash
 # Source the Bridge:
 source /ros-humble-ros1-bridge/install/setup.bash
 ```
+
+---
+
+## Base Image Selection
+
+### Why we use `ros:humble-ros-base-jammy`
+For the bridge image, we use the official, generic **`ros:humble-ros-base-jammy`** base image.
+* **QEMU Emulation Stability:** Since this image compiles custom C++ code (like `roscpp_tutorials` and `ros1_bridge`) during the build process, compiling under emulation (`linux/arm64` on `x86_64`) requires a generic, hardware-agnostic base.
+* **Avoiding Emulator Crashes:** Hardware-optimized images (like Jetson-optimized or Nvidia-optimized `arm64v8/ros` stacks) contain processor-specific instruction set extensions (e.g., LSE atomics, vector registers) that trigger address space collisions or illegal instruction segfaults under QEMU user-mode emulation. Using the official generic base avoids these issues.

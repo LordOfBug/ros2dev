@@ -32,20 +32,25 @@ When developing on a standard x86_64 development PC, you can compile the target 
                                                       [ R550 Robot (ARM64) ]
 ```
 
-### Steps for Setup & Compilation
+### Steps for Setup & Compilation (Emulation Mode)
 
-Follow these steps on your development PC to set up the multi-platform builder and build the image:
+Follow these steps on your development PC to set up a modern, stable multi-platform builder and run emulated builds:
 
-1. **Install QEMU emulation support packages:**
+1. **Install the modern, official QEMU binfmt handlers:**
+   Do not use the old, deprecated `multiarch/qemu-user-static` image. Instead, register the modern Docker-supported handlers:
    ```bash
-   sudo apt-get update
-   sudo apt-get install -y qemu-user-static binfmt-support
+   docker run --privileged --rm tonistiigi/binfmt --uninstall qemu-*
+   docker run --privileged --rm tonistiigi/binfmt --install all
    ```
 
-2. **Register QEMU static interpreters with Docker:**
+2. **Workaround for Emulated Linker Segfaults (Bypass ASLR):**
+   QEMU user-mode emulation has a known issue where host Address Space Layout Randomization (ASLR) collides with the guest VM's memory maps, causing random compiler/linker segmentation faults during multi-threaded compiles.
+   To compile in parallel at full speed using multiple jobs, temporarily disable ASLR on your host machine before building:
    ```bash
-   docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+   # Temporarily disable ASLR on host
+   sudo sysctl kernel.randomize_va_space=0
    ```
+   *(Note: Remember to re-enable it by setting it back to `2` once your build completes).*
 
 3. **Create and select a new multi-platform builder instance:**
    ```bash
@@ -56,10 +61,38 @@ Follow these steps on your development PC to set up the multi-platform builder a
    ```bash
    docker buildx inspect --bootstrap
    ```
-   *Note: In the printed output under `Platforms`, verify that both `linux/arm64` and `linux/amd64` are listed. This indicates that your builder is ready for cross-compiling.*
 
-5. **Build and load the image into your local docker registry:**
+5. **Build and load the image:**
    ```bash
    docker buildx build --platform linux/arm64 -t r550-humble-bot:latest --load .
    ```
-   *Note: The `--load` flag directs the builder to export the compiled ARM64 image back into your local machine's docker image store.*
+   *(With host ASLR disabled, you can raise compilation concurrency inside your Dockerfile safely).*
+
+---
+
+### Alternative: Native Remote Builds (Recommended for Speed)
+
+To completely bypass QEMU overhead and emulation bugs, you can configure your host to build natively on the robot's physical ARM64 CPU:
+
+1. **Add the robot as a Docker context on your host:**
+   ```bash
+   docker context create r550-robot --docker host=ssh://username@robot-ip-address
+   ```
+2. **Create a builder instance that uses the robot's native Docker engine:**
+   ```bash
+   docker buildx create --name native-builder --use default
+   docker buildx create --append --name native-builder r550-robot
+   ```
+3. **Build natively:**
+   ```bash
+   docker buildx build --platform linux/arm64 -t r550-humble-bot:latest --load .
+   ```
+
+---
+
+## Base Image Selection
+
+### Why we use `arm64v8/ros:humble-perception`
+For the robot navigation and control stack image, we keep the hardware-optimized **`arm64v8/ros:humble-perception`** base image.
+* **No Source Compilation During Build:** The bot's Dockerfile only installs packages via `apt-get` and does not compile C++ source code during the build. This means there are no complex linking processes that trigger QEMU emulator collisions on your development host.
+* **Native Runtime Optimization:** When deployed to the physical R550 robot, it runs natively on ARM64 hardware. The hardware-specific optimizations (such as Neon vector instructions, CPU-specific extensions, and GPU bindings) built into the `perception` image are highly beneficial here, providing low-latency execution for `navigation2`, sensor processing, and localization tasks on the robot's hardware.

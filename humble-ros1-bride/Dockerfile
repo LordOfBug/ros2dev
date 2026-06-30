@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# Use the official hardware-optimized ARM64 ROS 2 Humble base image
-FROM arm64v8/ros:humble-perception
+# Use the official multi-platform ROS 2 Humble base image (fully QEMU-compatible)
+FROM ros:humble-ros-base-jammy
 
 # Prevent interactive prompts during apt installations
 ENV DEBIAN_FRONTEND=noninteractive
@@ -41,9 +41,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # =========================================================================
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
     eatmydata apt-get install -y --no-install-recommends \
     python3-colcon-common-extensions \
-    ros-humble-nav2-msgs
+    ros-humble-nav2-msgs \
+    lld && \
+    rm -f /usr/bin/ld /usr/bin/aarch64-linux-gnu-ld && \
+    ln -s /usr/bin/ld.lld /usr/bin/ld && \
+    ln -s /usr/bin/ld.lld /usr/bin/aarch64-linux-gnu-ld
 
 # Copy local source tarball assets (must run ./download_assets.sh on host first)
 COPY assets/ /assets/
@@ -58,56 +63,109 @@ ARG ADD_custom_action_mapping=1
 # Use bash for shell commands to enable sourcing setup files
 SHELL ["/bin/bash", "-o", "pipefail", "-o", "errexit", "-c"]
 
-RUN # \
-    # 3.1) Build ros_tutorials (ROS 1) \
-    if [[ "$ADD_ros_tutorials" = "1" ]]; then \
-      mkdir -p /ros_tutorials && tar -xzf /assets/ros_tutorials.tar.gz -C /ros_tutorials --strip-components=1; \
+RUN if [[ "$ADD_ros_tutorials" = "1" ]]; then \
+      mkdir -p /ros_tutorials && tar -xzf /assets/ros_tutorials.tar.gz -C /ros_tutorials --strip-components=1 && rm -rf /ros_tutorials/turtlesim; \
       cd /ros_tutorials; \
       unset ROS_DISTRO; \
-      colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release; \
+      ulimit -s unlimited || true; \
+      MEMG=$(free -g 2>/dev/null | awk '/^Mem:/{print $2}'); \
+      [[ -z "$MEMG" || "$MEMG" -eq 0 ]] && MEMG=8; \
+      NPROC=$(nproc 2>/dev/null || echo 4); \
+      JOBS=$((MEMG / 2)); \
+      [[ $JOBS -lt 1 ]] && JOBS=1; \
+      MIN=$((JOBS < NPROC ? JOBS : NPROC)); \
+      [[ $MIN -gt 4 ]] && MIN=4; \
+      echo "System Info: Host RAM: ${MEMG}G | CPU Cores: ${NPROC} | Selected Jobs: ${MIN}"; \
+      MAKEFLAGS="-j $MIN" colcon build --executor sequential --parallel-workers 1 --cmake-args -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_NO_SYSTEM_FROM_IMPORTED=ON -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=lld" || exit 1; \
       if [[ "$PWD" = "/ros_tutorials" ]]; then mv install /tmp_install && rm -rf * && mv /tmp_install install; fi; \
-      \
+    fi
+
+RUN if [[ "$ADD_ros_tutorials" = "1" ]]; then \
       source /ros_tutorials/install/setup.bash; \
       mkdir -p /common_tutorials && tar -xzf /assets/common_tutorials.tar.gz -C /common_tutorials --strip-components=1; \
       cd /common_tutorials; \
       unset ROS_DISTRO; \
-      colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release; \
+      ulimit -s unlimited || true; \
+      MEMG=$(free -g 2>/dev/null | awk '/^Mem:/{print $2}'); \
+      [[ -z "$MEMG" || "$MEMG" -eq 0 ]] && MEMG=8; \
+      NPROC=$(nproc 2>/dev/null || echo 4); \
+      JOBS=$((MEMG / 2)); \
+      [[ $JOBS -lt 1 ]] && JOBS=1; \
+      MIN=$((JOBS < NPROC ? JOBS : NPROC)); \
+      [[ $MIN -gt 4 ]] && MIN=4; \
+      echo "System Info: Host RAM: ${MEMG}G | CPU Cores: ${NPROC} | Selected Jobs: ${MIN}"; \
+      MAKEFLAGS="-j $MIN" colcon build --executor sequential --parallel-workers 1 --cmake-args -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_NO_SYSTEM_FROM_IMPORTED=ON -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=lld" || exit 1; \
       if [[ "$PWD" = "/common_tutorials" ]]; then mv install /tmp_install && rm -rf * && mv /tmp_install install; fi; \
-    fi; \
-    # \
-    # 3.2) Build custom action mapping \
-    if [[ "$ADD_custom_action_mapping" = "1" ]]; then \
+    fi
+
+RUN if [[ "$ADD_custom_action_mapping" = "1" ]]; then \
       mkdir -p /control_msgs_ros1 && tar -xzf /assets/control_msgs_ros1.tar.gz -C /control_msgs_ros1 --strip-components=1; \
       cd /control_msgs_ros1; \
       unset ROS_DISTRO; \
-      colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release; \
+      ulimit -s unlimited || true; \
+      MEMG=$(free -g 2>/dev/null | awk '/^Mem:/{print $2}'); \
+      [[ -z "$MEMG" || "$MEMG" -eq 0 ]] && MEMG=8; \
+      NPROC=$(nproc 2>/dev/null || echo 4); \
+      JOBS=$((MEMG / 2)); \
+      [[ $JOBS -lt 1 ]] && JOBS=1; \
+      MIN=$((JOBS < NPROC ? JOBS : NPROC)); \
+      [[ $MIN -gt 4 ]] && MIN=4; \
+      echo "System Info: Host RAM: ${MEMG}G | CPU Cores: ${NPROC} | Selected Jobs: ${MIN}"; \
+      MAKEFLAGS="-j $MIN" colcon build --executor sequential --parallel-workers 1 --cmake-args -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_NO_SYSTEM_FROM_IMPORTED=ON -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=lld" || exit 1; \
       if [[ "$PWD" = "/control_msgs_ros1" ]]; then mv install /tmp_install && rm -rf * && mv /tmp_install install; fi; \
-      \
+    fi
+
+RUN if [[ "$ADD_custom_action_mapping" = "1" ]]; then \
       mkdir -p /control_msgs_ros2 && tar -xzf /assets/control_msgs_ros2.tar.gz -C /control_msgs_ros2 --strip-components=1; \
       cd /control_msgs_ros2; \
       source /opt/ros/humble/setup.bash; \
-      colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release; \
+      ulimit -s unlimited || true; \
+      MEMG=$(free -g 2>/dev/null | awk '/^Mem:/{print $2}'); \
+      [[ -z "$MEMG" || "$MEMG" -eq 0 ]] && MEMG=8; \
+      NPROC=$(nproc 2>/dev/null || echo 4); \
+      JOBS=$((MEMG / 2)); \
+      [[ $JOBS -lt 1 ]] && JOBS=1; \
+      MIN=$((JOBS < NPROC ? JOBS : NPROC)); \
+      [[ $MIN -gt 4 ]] && MIN=4; \
+      echo "System Info: Host RAM: ${MEMG}G | CPU Cores: ${NPROC} | Selected Jobs: ${MIN}"; \
+      MAKEFLAGS="-j $MIN" colcon build --executor sequential --parallel-workers 1 --cmake-args -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_NO_SYSTEM_FROM_IMPORTED=ON -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=lld" || exit 1; \
       if [[ "$PWD" = "/control_msgs_ros2" ]]; then mv install /tmp_install && rm -rf * && mv /tmp_install install; fi; \
-      \
+    fi
+
+RUN if [[ "$ADD_custom_action_mapping" = "1" ]]; then \
+      source /opt/ros/humble/setup.bash; \
+      source /control_msgs_ros2/install/setup.bash; \
       mkdir -p /custom_action/src/bridge_mapping; \
       tar -xzf /assets/bridge_mapping.tar.gz -C /custom_action/src/bridge_mapping --strip-components=1; \
       cd /custom_action; \
-      source /opt/ros/humble/setup.bash; \
-      colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release; \
+      ulimit -s unlimited || true; \
+      MEMG=$(free -g 2>/dev/null | awk '/^Mem:/{print $2}'); \
+      [[ -z "$MEMG" || "$MEMG" -eq 0 ]] && MEMG=8; \
+      NPROC=$(nproc 2>/dev/null || echo 4); \
+      JOBS=$((MEMG / 2)); \
+      [[ $JOBS -lt 1 ]] && JOBS=1; \
+      MIN=$((JOBS < NPROC ? JOBS : NPROC)); \
+      [[ $MIN -gt 4 ]] && MIN=4; \
+      echo "System Info: Host RAM: ${MEMG}G | CPU Cores: ${NPROC} | Selected Jobs: ${MIN}"; \
+      MAKEFLAGS="-j $MIN" colcon build --executor sequential --parallel-workers 1 --cmake-args -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_NO_SYSTEM_FROM_IMPORTED=ON -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=lld" || exit 1; \
       if [[ "$PWD" = "/custom_action" ]]; then mv install /tmp_install && rm -rf * && mv /tmp_install install; fi; \
-    fi; \
-    # \
-    # 3.3) Build ros1_bridge \
-    source /opt/ros/humble/setup.bash; \
+    fi
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
     if [[ "$ADD_ros_tutorials" = "1" ]]; then \
-      source /ros_tutorials/install/setup.bash; \
-      source /common_tutorials/install/setup.bash; \
+      apt-get update && \
       eatmydata apt-get install -y --no-install-recommends \
         ros-humble-example-interfaces \
         ros-humble-action-tutorials-interfaces \
         ros-humble-action-tutorials-cpp \
         ros-humble-action-tutorials-py; \
-      source /opt/ros/humble/setup.bash; \
+    fi
+
+RUN source /opt/ros/humble/setup.bash; \
+    if [[ "$ADD_ros_tutorials" = "1" ]]; then \
+      source /ros_tutorials/install/setup.bash; \
+      source /common_tutorials/install/setup.bash; \
     fi; \
     if [[ "$ADD_custom_action_mapping" = "1" ]]; then \
       source /control_msgs_ros1/install/setup.bash; \
@@ -117,17 +175,19 @@ RUN # \
     mkdir -p /ros-humble-ros1-bridge/src/ros1_bridge; \
     tar -xzf /assets/ros1_bridge.tar.gz -C /ros-humble-ros1-bridge/src/ros1_bridge --strip-components=1; \
     cd /ros-humble-ros1-bridge; \
-    MEMG=$(printf "%.0f" $(free -g | awk '/^Mem:/{print $2}')); \
-    NPROC=$(nproc); MIN=$((MEMG<NPROC ? MEMG : NPROC)); \
-    [[ $MIN -lt 1 ]] && MIN=1; \
-    echo "Running $MIN concurrent jobs to build ros1_bridge"; \
-    time MAKEFLAGS="-j $MIN" colcon build --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Release; \
-    if [[ "$PWD" = "/ros-humble-ros1-bridge" ]]; then mv install /tmp_install && rm -rf * && mv /tmp_install install; fi; \
-    # \
-    # 3.4) Clean up /assets and apt lists \
-    rm -rf /assets; \
-    apt-get clean all; \
-    rm -rf /var/lib/apt/lists/*
+    ulimit -s unlimited || true; \
+    MEMG=$(free -g 2>/dev/null | awk '/^Mem:/{print $2}'); \
+    [[ -z "$MEMG" || "$MEMG" -eq 0 ]] && MEMG=8; \
+    NPROC=$(nproc 2>/dev/null || echo 4); \
+    JOBS=$((MEMG / 2)); \
+    [[ $JOBS -lt 1 ]] && JOBS=1; \
+    MIN=$((JOBS < NPROC ? JOBS : NPROC)); \
+    [[ $MIN -gt 4 ]] && MIN=4; \
+    echo "System Info: Host RAM: ${MEMG}G | CPU Cores: ${NPROC} | Selected Jobs: ${MIN}"; \
+    time MAKEFLAGS="-j $MIN" colcon build --executor sequential --parallel-workers 1 --event-handlers console_direct+ --cmake-args -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_NO_SYSTEM_FROM_IMPORTED=ON -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=lld" || exit 1; \
+    if [[ "$PWD" = "/ros-humble-ros1-bridge" ]]; then mv install /tmp_install && rm -rf * && mv /tmp_install install; fi
+
+RUN rm -rf /assets
 
 # Set standard workspace directory
 WORKDIR /workspace
