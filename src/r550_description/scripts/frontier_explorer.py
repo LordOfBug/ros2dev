@@ -16,7 +16,8 @@ R550 自主探索节点 — Frontier Exploration
 
 import rclpy
 from rclpy.node import Node
-from rclpy.executors import ExternalShutdownException
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
 from nav_msgs.msg import OccupancyGrid
@@ -27,6 +28,7 @@ import numpy as np
 from scipy.ndimage import label, binary_dilation
 import math
 import tf2_ros
+import threading
 
 
 class FrontierExplorer(Node):
@@ -41,6 +43,10 @@ class FrontierExplorer(Node):
         self.declare_parameter('min_goal_distance', 0.5)      # 忽略太近的 frontier
         self.declare_parameter('goal_offset', 0.5)             # 目标点偏移量（从 frontier 向 robot 方向）
         self.declare_parameter('no_progress_timeout', 25.0)    # 无进展超时
+        self.declare_parameter('preempt_min_dist', 0.3)        # 抢占最小距离
+        self.declare_parameter('preempt_max_dist', 1.2)        # 抢占最大距离
+        self.declare_parameter('preempt_cooldown', 8.0)        # 抢占冷却时间
+        self.declare_parameter('preempt_min_diff', 0.6)        # 抢占新旧目标最小差距
 
         self.min_frontier_size = self.get_parameter('min_frontier_size').value
         self.robot_frame = self.get_parameter('robot_frame').value
@@ -49,6 +55,10 @@ class FrontierExplorer(Node):
         self.min_goal_distance = self.get_parameter('min_goal_distance').value
         self.goal_offset = self.get_parameter('goal_offset').value
         self.no_progress_timeout = self.get_parameter('no_progress_timeout').value
+        self.preempt_min_dist = self.get_parameter('preempt_min_dist').value
+        self.preempt_max_dist = self.get_parameter('preempt_max_dist').value
+        self.preempt_cooldown = self.get_parameter('preempt_cooldown').value
+        self.preempt_min_diff = self.get_parameter('preempt_min_diff').value
 
         # ===================== 状态变量 =====================
         self.current_map = None
@@ -61,6 +71,7 @@ class FrontierExplorer(Node):
         self.original_goal_xy = None
         self.current_goal_handle = None
         self.nav_start_time = None
+        self.nav_start_xy = None             # 当前导航目标的起点位置
         self.last_progress_time = None
         self.last_feedback_distance = None
         self.last_success_xy = None          # 上次成功到达的位置（用于就近探索）
@@ -73,13 +84,23 @@ class FrontierExplorer(Node):
         self.last_preempt_time = None        # 上次动态抢占切换目标的时间（用于冷却限制）
         self.is_backing_up = False           # 是否正在进行后退脱困动作
         self.backup_ticks_remaining = 0      # 剩余后退 tick 数 (10Hz)
+        self.backup_delay_ticks = 0          # 脱困动作开始前的延迟 ticks (用于等待 Nav2 停止)
         self.just_recovered = False          # 刚从卡阻后退恢复（下次选目标时优先选朝向一致的）
         self.startup_clearance_done = False   # 启动时是否已完成前方间隙检查
 
+        # ===================== 线程同步锁与回调组 =====================
+        self.map_lock = threading.Lock()
+        
+        # 创建相互排斥的回调组，使得重载 of CPU 运算（如探索 tick）不会阻塞高频 of cmd_vel 线程和地图/action 接收
+        self.cb_group_map = MutuallyExclusiveCallbackGroup()
+        self.cb_group_tick = MutuallyExclusiveCallbackGroup()
+        self.cb_group_backup = MutuallyExclusiveCallbackGroup()
+        self.cb_group_nav = MutuallyExclusiveCallbackGroup()
+
         # ===================== ROS 通信 =====================
         self.map_sub = self.create_subscription(
-            OccupancyGrid, '/map', self.map_callback, 10)
-        self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+            OccupancyGrid, '/map', self.map_callback, 10, callback_group=self.cb_group_map)
+        self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose', callback_group=self.cb_group_nav)
         self.marker_pub = self.create_publisher(
             MarkerArray, '/frontier_markers', 10)
         self.tf_buffer = tf2_ros.Buffer()
@@ -87,8 +108,8 @@ class FrontierExplorer(Node):
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
         # 定时器
-        self.timer = self.create_timer(self.update_interval, self.exploration_tick)
-        self.backup_timer = self.create_timer(0.1, self.backup_tick)
+        self.timer = self.create_timer(self.update_interval, self.exploration_tick, callback_group=self.cb_group_tick)
+        self.backup_timer = self.create_timer(0.1, self.backup_tick, callback_group=self.cb_group_backup)
 
         self.get_logger().info('🧭 Frontier Explorer 已启动')
         self.get_logger().info(f'   min_frontier_size={self.min_frontier_size}, '
@@ -98,10 +119,14 @@ class FrontierExplorer(Node):
     # ===================== 回调 =====================
 
     def map_callback(self, msg):
-        self.current_map = msg
+        with self.map_lock:
+            self.current_map = msg
 
     def exploration_tick(self):
-        if self.exploration_complete or self.current_map is None:
+        with self.map_lock:
+            local_map = self.current_map
+
+        if self.exploration_complete or local_map is None:
             return
 
         if self.is_backing_up:
@@ -116,9 +141,9 @@ class FrontierExplorer(Node):
         # 先主动后退创建转向空间，确保左手法则扫描到侧向目标后机器人能安全旋转。
         if not self.startup_clearance_done and self.goals_sent == 0:
             self.startup_clearance_done = True
-            if self.current_map is not None and robot_yaw is not None:
-                info = self.current_map.info
-                grid = np.array(self.current_map.data, dtype=np.int8).reshape(info.height, info.width)
+            if local_map is not None and robot_yaw is not None:
+                info = local_map.info
+                grid = np.array(local_map.data, dtype=np.int8).reshape(info.height, info.width)
                 front_blocked = False
                 for check_dist in [0.15, 0.20, 0.25]:
                     check_x = robot_x + check_dist * math.cos(robot_yaw)
@@ -144,40 +169,40 @@ class FrontierExplorer(Node):
             self.check_nav_progress()
             
             # 【核心：运动中动态重新规划目标】
-            # 在距离旧目标较近 (例如 < 1.2m 且 > 0.3m)，且非重试状态下，执行动态替换目标，实现平滑转向
+            # 在距离旧目标较近 (例如 < self.preempt_max_dist 且 > self.preempt_min_dist)，且非重试状态下，执行动态替换目标，实现平滑转向
             if self.retry_count == 0 and self.last_feedback_distance is not None:
-                # 检查平滑抢占冷却时间（至少间隔 8.0s），防止频繁在拐角处连续切换目标导致打滑/撞墙
+                # 检查平滑抢占冷却时间（至少间隔 self.preempt_cooldown 秒），防止频繁在拐角处连续切换目标导致打滑/撞墙
                 can_preempt = True
                 elapsed_since_preempt = 999.0
                 if self.last_preempt_time is not None:
                     elapsed_since_preempt = (self.get_clock().now() - self.last_preempt_time).nanoseconds / 1e9
-                    if elapsed_since_preempt < 8.0:
+                    if elapsed_since_preempt < self.preempt_cooldown:
                         can_preempt = False
 
-                if 0.3 < self.last_feedback_distance < 1.2:
+                if self.preempt_min_dist < self.last_feedback_distance < self.preempt_max_dist:
                     if not can_preempt:
                         self.get_logger().info(
-                            f'⏳ 动态切换冷却中（上次切换后已过 {elapsed_since_preempt:.1f}s，冷却限制 8.0s），跳过本轮抢占。')
+                            f'⏳ 动态切换冷却中（上次切换后已过 {elapsed_since_preempt:.1f}s，冷却限制 {self.preempt_cooldown:.1f}s），跳过本轮抢占。')
                     else:
                         self.get_logger().info(
                             f'🔄 满足触发重新规划距离条件（剩余距离: {self.last_feedback_distance:.2f}m），开始运动中重新规划...')
-                        frontiers = self.detect_frontiers(self.current_map)
+                        frontiers = self.detect_frontiers(local_map)
                         if frontiers:
-                            best = self.select_best_frontier(frontiers, robot_x, robot_y, robot_yaw)
+                            best = self.select_best_frontier(frontiers, robot_x, robot_y, robot_yaw, local_map)
                             if best is not None:
                                 new_goal_x, new_goal_y, _ = best
-                                # 只有当新计算出的目标点与当前执行的目标点距离有明显差距 (如 > 0.6m) 时才抢占，防止微小跳动
+                                # 只有当新计算出的目标点与当前执行的目标点距离有明显差距 (如 > self.preempt_min_diff) 时才抢占，防止微小跳动
                                 dx = new_goal_x - self.current_goal_xy[0]
                                 dy = new_goal_y - self.current_goal_xy[1]
                                 dist_diff = math.hypot(dx, dy)
-                                if dist_diff > 0.6:
+                                if dist_diff > self.preempt_min_diff:
                                     self.get_logger().info(
-                                        f'🔄 运动中动态平滑切换目标！新旧目标距离差距 {dist_diff:.2f}m > 0.6m，发送新目标：({new_goal_x:.2f}, {new_goal_y:.2f})')
+                                        f'🔄 运动中动态平滑切换目标！新旧目标距离差距 {dist_diff:.2f}m > {self.preempt_min_diff:.2f}m，发送新目标：({new_goal_x:.2f}, {new_goal_y:.2f})')
                                     self.publish_markers(frontiers, best)
                                     self.send_nav_goal(new_goal_x, new_goal_y)
                                 else:
                                     self.get_logger().info(
-                                        f'⏭️ 新旧目标距离差距 {dist_diff:.2f}m <= 0.6m，为防抖动不进行切换。')
+                                        f'⏭️ 新旧目标距离差距 {dist_diff:.2f}m <= {self.preempt_min_diff:.2f}m，为防抖动不进行切换。')
             return
 
         # 如果有待重试的 frontier（重试次数为 1）
@@ -198,7 +223,7 @@ class FrontierExplorer(Node):
             else:
                 self.retry_count = 0  # 无法计算偏移，直接寻找新 frontier
 
-        frontiers = self.detect_frontiers(self.current_map)
+        frontiers = self.detect_frontiers(local_map)
 
         if not frontiers:
             self.get_logger().info('🎉 没有更多 frontier — 探索完成！')
@@ -207,7 +232,7 @@ class FrontierExplorer(Node):
             self.print_summary()
             return
 
-        best = self.select_best_frontier(frontiers, robot_x, robot_y, robot_yaw)
+        best = self.select_best_frontier(frontiers, robot_x, robot_y, robot_yaw, local_map)
 
         if best is None:
             self.get_logger().info('🎉 所有 frontier 已屏蔽 — 探索完成！')
@@ -221,7 +246,16 @@ class FrontierExplorer(Node):
         self.send_nav_goal(best[0], best[1])
 
     def backup_tick(self):
-        if self.is_backing_up and self.backup_ticks_remaining > 0:
+        if not self.is_backing_up:
+            return
+
+        if self.backup_delay_ticks > 0:
+            stop_msg = Twist()
+            self.cmd_vel_pub.publish(stop_msg)
+            self.backup_delay_ticks -= 1
+            return
+
+        if self.backup_ticks_remaining > 0:
             msg = Twist()
             msg.linear.x = -0.1  # 后退速度
             msg.angular.z = 0.2  # 增加微小的旋转，使后退轨迹呈弧线，利于在贴墙/滑移时摆脱摩擦锁死
@@ -283,9 +317,11 @@ class FrontierExplorer(Node):
 
         # 连续 3 次 tick (约 6 秒) 没有发生位移，且车头前方有障碍物，判定为受阻/撞墙
         if self.stuck_ticks >= 3:
-            if self.current_map is not None:
-                info = self.current_map.info
-                grid = np.array(self.current_map.data, dtype=np.int8).reshape(info.height, info.width)
+            with self.map_lock:
+                local_map = self.current_map
+            if local_map is not None:
+                info = local_map.info
+                grid = np.array(local_map.data, dtype=np.int8).reshape(info.height, info.width)
                 
                 # 检查车头前方 0.15m 至 0.35m 的区间是否有障碍物 (100)
                 is_blocked = False
@@ -307,34 +343,40 @@ class FrontierExplorer(Node):
                 if is_blocked:
                     self.get_logger().warn(f'🚨 判定受阻！连续未移动 tick={self.stuck_ticks} 且车头前方 {blocked_dist}m 处检测到墙体/障碍物。执行后退避障并加入黑名单。')
                     if self.current_goal_xy is not None:
-                        self.blacklisted_goals.append(self.current_goal_xy)
+                        self.add_to_blacklist(self.current_goal_xy)
                         if self.original_goal_xy is not None:
-                            self.blacklisted_goals.append(self.original_goal_xy)
+                            self.add_to_blacklist(self.original_goal_xy)
                     # 将机器人当前位置也加入黑名单，防止在原地继续规划附近的点
-                    self.blacklisted_goals.append((robot_x, robot_y))
+                    self.add_to_blacklist((robot_x, robot_y))
                     self.stuck_ticks = 0
                     self.retry_count = 2  # 设为 2 以跳过 retry_count == 0 时的垂直偏移重试阶段
                     self.cancel_current_goal()
                     
-                    # 触发 1.5 秒 (15 ticks @ 10Hz) 的主动后退动作
+                    # 触发 1.5 秒 (15 ticks @ 10Hz) 的主动后退动作，加 0.5 秒 (5 ticks) 延迟等待 Nav2 停止
                     self.is_backing_up = True
                     self.backup_ticks_remaining = 15
+                    self.backup_delay_ticks = 5
+                    stop_msg = Twist()
+                    self.cmd_vel_pub.publish(stop_msg)
                     return
                 elif self.stuck_ticks >= 5:
                     self.get_logger().warn(f'🚨 判定卡阻（超时）！连续未移动 tick={self.stuck_ticks}，车头虽无明显障碍物，但可能侧面/后面卡住或打滑。执行后退避障并加入黑名单。')
                     if self.current_goal_xy is not None:
-                        self.blacklisted_goals.append(self.current_goal_xy)
+                        self.add_to_blacklist(self.current_goal_xy)
                         if self.original_goal_xy is not None:
-                            self.blacklisted_goals.append(self.original_goal_xy)
+                            self.add_to_blacklist(self.original_goal_xy)
                     # 将机器人当前位置也加入黑名单，防止在原地继续规划附近的点
-                    self.blacklisted_goals.append((robot_x, robot_y))
+                    self.add_to_blacklist((robot_x, robot_y))
                     self.stuck_ticks = 0
                     self.retry_count = 2
                     self.cancel_current_goal()
                     
-                    # 触发 1.5 秒 (15 ticks @ 10Hz) 的主动后退动作
+                    # 触发 1.5 秒 (15 ticks @ 10Hz) 的主动后退动作，加 0.5 秒 (5 ticks) 延迟等待 Nav2 停止
                     self.is_backing_up = True
                     self.backup_ticks_remaining = 15
+                    self.backup_delay_ticks = 5
+                    stop_msg = Twist()
+                    self.cmd_vel_pub.publish(stop_msg)
                     return
                 else:
                     self.get_logger().info(f'ℹ️ 物理位移不足 (tick={self.stuck_ticks})，但车头前方无障碍物，继续等待。')
@@ -345,17 +387,28 @@ class FrontierExplorer(Node):
             if since_progress > self.no_progress_timeout:
                 self.get_logger().warn(
                     f'⏱️ 已 {since_progress:.0f}s 无进展，取消当前目标')
+                if self.retry_count == 0:
+                    self.retry_count = 1
+                    self.get_logger().info('ℹ️ 标记为待重试一次')
+                else:
+                    self.get_logger().warn('⚠️ 重试依然无进展，加入黑名单')
+                    if self.current_goal_xy is not None:
+                        self.add_to_blacklist(self.current_goal_xy)
+                        if self.original_goal_xy is not None:
+                            self.add_to_blacklist(self.original_goal_xy)
+                    self.retry_count = 0
                 self.cancel_current_goal()
 
     def cancel_current_goal(self):
         self.is_navigating = False
         if self.current_goal_handle is not None:
             self.current_goal_handle.cancel_goal_async()
+            self.current_goal_handle = None
         else:
             if self.current_goal_xy:
-                self.blacklisted_goals.append(self.current_goal_xy)
+                self.add_to_blacklist(self.current_goal_xy)
                 if self.original_goal_xy is not None:
-                    self.blacklisted_goals.append(self.original_goal_xy)
+                    self.add_to_blacklist(self.original_goal_xy)
             self.current_goal_handle = None
 
     # ===================== Frontier 检测 =====================
@@ -392,23 +445,23 @@ class FrontierExplorer(Node):
 
     # ===================== Frontier 选择 =====================
 
-    def select_best_frontier(self, frontiers, robot_x, robot_y, robot_yaw):
+    def select_best_frontier(self, frontiers, robot_x, robot_y, robot_yaw, map_msg):
         """
         选择最佳 frontier。
         评分 = log2(size) * 2 - distance + heading_bonus + nearby_boost
         大 frontier + 近距离 → 高分。
         如果刚到达过一个目标，优先探索 3m 内 the frontier（就近完成当前区域）。
         """
-        if self.current_map is None:
+        if map_msg is None:
             self.get_logger().warn('⚠️ select_best_frontier: 地图数据为空！')
             return None
 
-        info = self.current_map.info
+        info = map_msg.info
         w, h = info.width, info.height
         res = info.resolution
         ox = info.origin.position.x
         oy = info.origin.position.y
-        grid = np.array(self.current_map.data, dtype=np.int8).reshape(h, w)
+        grid = np.array(map_msg.data, dtype=np.int8).reshape(h, w)
 
         # 如果我们正在导航（且非重试阶段），我们处于运动中重规划状态
         # 此时需要限制候选 frontier 的方向，防止折返/转弯导致 ping-pong 震荡
@@ -421,8 +474,10 @@ class FrontierExplorer(Node):
             f_prefix = f'  [Frontier #{idx} ({fx:.2f}, {fy:.2f}, 规模:{size})]'
             
             # 1. 运动中重规划方向约束：新目标方向必须与当前导航方向基本一致 (夹角在 45 度内)
-            if is_preempting and self.current_goal_dir_yaw is not None:
-                frontier_yaw = math.atan2(fy - robot_y, fx - robot_x)
+            if is_preempting and self.current_goal_dir_yaw is not None and self.nav_start_xy is not None:
+                start_x, start_y = self.nav_start_xy
+                # Calculate the yaw of the candidate frontier relative to the start of the current trajectory
+                frontier_yaw = math.atan2(fy - start_y, fx - start_x)
                 diff_yaw = abs(math.atan2(math.sin(frontier_yaw - self.current_goal_dir_yaw),
                                           math.cos(frontier_yaw - self.current_goal_dir_yaw)))
                 if diff_yaw > (math.pi / 4.0):  # 45度角限制
@@ -512,35 +567,38 @@ class FrontierExplorer(Node):
             yaw = robot_yaw if robot_yaw is not None else 0.0
             sweep_step = math.radians(30)  # 每步 30°
             sweep_count = 12               # 360° / 30° = 12 步
-            self.get_logger().info(f'🔄 左手法则启动: frontier ({fx:.2f}, {fy:.2f}) 距车仅 {dist:.2f}m，开始两阶段自适应安全扫描')
+            scan_distances = [0.4, 0.6, 0.8, 1.0, 1.2]
+            self.get_logger().info(f'🔄 左手法则启动: frontier ({fx:.2f}, {fy:.2f}) 距车仅 {dist:.2f}m，开始多距离两阶段自适应安全扫描')
             
             # 阶段 1：尝试开阔安全距离 (radius=8, 0.40m)
-            for i in range(sweep_count):
-                target_angle = yaw + i * sweep_step
-                tx = robot_x + 1.0 * math.cos(target_angle)
-                ty = robot_y + 1.0 * math.sin(target_angle)
-                col = int((tx - ox) / res)
-                row = int((ty - oy) / res)
-                if 0 <= col < w and 0 <= row < h:
-                    if grid[row, col] == 0:
-                        if self.is_cell_safe(row, col, grid, w, h, radius=8, allow_unknown=allow_unknown):
-                            self.get_logger().info(f'  ✅ 左手法则 (阶段1:开阔) → ({tx:.2f}, {ty:.2f}) 安全可达')
-                            return tx, ty
+            for scan_dist in scan_distances:
+                for i in range(sweep_count):
+                    target_angle = yaw + i * sweep_step
+                    tx = robot_x + scan_dist * math.cos(target_angle)
+                    ty = robot_y + scan_dist * math.sin(target_angle)
+                    col = int((tx - ox) / res)
+                    row = int((ty - oy) / res)
+                    if 0 <= col < w and 0 <= row < h:
+                        if grid[row, col] == 0:
+                            if self.is_cell_safe(row, col, grid, w, h, radius=8, allow_unknown=allow_unknown):
+                                self.get_logger().info(f'  ✅ 左手法则 (阶段1:开阔, 距离 {scan_dist:.1f}m) → ({tx:.2f}, {ty:.2f}) 安全可达')
+                                return tx, ty
 
             # 阶段 2：回退到保守安全距离 (radius=5, 0.25m)
-            for i in range(sweep_count):
-                target_angle = yaw + i * sweep_step
-                tx = robot_x + 1.0 * math.cos(target_angle)
-                ty = robot_y + 1.0 * math.sin(target_angle)
-                col = int((tx - ox) / res)
-                row = int((ty - oy) / res)
-                if 0 <= col < w and 0 <= row < h:
-                    if grid[row, col] == 0:
-                        if self.is_cell_safe(row, col, grid, w, h, radius=5, allow_unknown=allow_unknown):
-                            self.get_logger().info(f'  ✅ 左手法则 (阶段2:保守) → ({tx:.2f}, {ty:.2f}) 安全可达')
-                            return tx, ty
+            for scan_dist in scan_distances:
+                for i in range(sweep_count):
+                    target_angle = yaw + i * sweep_step
+                    tx = robot_x + scan_dist * math.cos(target_angle)
+                    ty = robot_y + scan_dist * math.sin(target_angle)
+                    col = int((tx - ox) / res)
+                    row = int((ty - oy) / res)
+                    if 0 <= col < w and 0 <= row < h:
+                        if grid[row, col] == 0:
+                            if self.is_cell_safe(row, col, grid, w, h, radius=5, allow_unknown=allow_unknown):
+                                self.get_logger().info(f'  ✅ 左手法则 (阶段2:保守, 距离 {scan_dist:.1f}m) → ({tx:.2f}, {ty:.2f}) 安全可达')
+                                return tx, ty
             
-            self.get_logger().warn(f'  ⚠️ 左手法则: 两阶段扫描完毕，未找到安全目标')
+            self.get_logger().warn(f'  ⚠️ 左手法则: 多距离两阶段扫描完毕，未找到安全目标')
             return None
 
         # 多角度单阶段扫描：对每个方向执行 3 步判定
@@ -663,6 +721,11 @@ class FrontierExplorer(Node):
             self.get_logger().error('❌ Nav2 未就绪')
             return
 
+        if self.current_goal_handle is not None:
+            self.get_logger().info('🔄 Cancelling active goal before sending new goal')
+            self.current_goal_handle.cancel_goal_async()
+            self.current_goal_handle = None
+
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose = PoseStamped()
         goal_msg.pose.header.frame_id = 'map'
@@ -677,6 +740,7 @@ class FrontierExplorer(Node):
         if self.retry_count == 0:
             self.original_goal_xy = (x, y)
         self.nav_start_time = self.get_clock().now()
+        self.nav_start_xy = None
         self.last_progress_time = self.get_clock().now()
         self.last_feedback_distance = None
         self.last_robot_xy = None
@@ -687,6 +751,7 @@ class FrontierExplorer(Node):
         # 计算并保存当前导航目标的初始航向角（用于运动中重规划方向约束）
         robot_x, robot_y, _ = self.get_robot_position()
         if robot_x is not None:
+            self.nav_start_xy = (robot_x, robot_y)
             self.current_goal_dir_yaw = math.atan2(y - robot_y, x - robot_x)
             src_str = f"自 ({robot_x:.2f}, {robot_y:.2f})"
         else:
@@ -704,9 +769,9 @@ class FrontierExplorer(Node):
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().warn('⚠️ 目标被拒绝')
-            self.blacklisted_goals.append(self.current_goal_xy)
+            self.add_to_blacklist(self.current_goal_xy)
             if self.original_goal_xy is not None:
-                self.blacklisted_goals.append(self.original_goal_xy)
+                self.add_to_blacklist(self.original_goal_xy)
             self.is_navigating = False
             self.retry_count = 0
             return
@@ -737,20 +802,23 @@ class FrontierExplorer(Node):
         elif status == 6:  # ABORTED
             self.get_logger().warn('⚠️ 导航被终止 (ABORTED)！通常是由于前方遇障且控制器无有效轨迹。立即启动后退避障并加入黑名单。')
             if self.current_goal_xy is not None:
-                self.blacklisted_goals.append(self.current_goal_xy)
+                self.add_to_blacklist(self.current_goal_xy)
                 if self.original_goal_xy is not None:
-                    self.blacklisted_goals.append(self.original_goal_xy)
+                    self.add_to_blacklist(self.original_goal_xy)
             # 获取机器人当前位置并加入黑名单，防止原地规划
             robot_x, robot_y, _ = self.get_robot_position()
             if robot_x is not None:
-                self.blacklisted_goals.append((robot_x, robot_y))
+                self.add_to_blacklist((robot_x, robot_y))
             self.retry_count = 2  # 直接跳过重试，开始寻找全新区域
             self.is_navigating = False
             self.current_goal_handle = None
             
-            # 立即触发 1.5 秒的主动后退避障动作
+            # 立即触发 1.5 秒的主动后退避障动作，加 0.5 秒 (5 ticks) 延迟等待 Nav2 停止
             self.is_backing_up = True
             self.backup_ticks_remaining = 15
+            self.backup_delay_ticks = 5
+            stop_msg = Twist()
+            self.cmd_vel_pub.publish(stop_msg)
             return
         elif status == 5:  # CANCELED
             self.get_logger().info('ℹ️ 已取消')
@@ -759,20 +827,37 @@ class FrontierExplorer(Node):
                 self.get_logger().info('ℹ️ 标记为待重试一次')
             else:
                 self.get_logger().warn('⚠️ 重试依然无进展，加入黑名单')
-                self.blacklisted_goals.append(self.current_goal_xy)
+                self.add_to_blacklist(self.current_goal_xy)
                 if self.original_goal_xy is not None:
-                    self.blacklisted_goals.append(self.original_goal_xy)
+                    self.add_to_blacklist(self.original_goal_xy)
                 self.retry_count = 0
         else:
             self.get_logger().warn(f'⚠️ 状态码: {status}，加入黑名单')
-            self.blacklisted_goals.append(self.current_goal_xy)
+            self.add_to_blacklist(self.current_goal_xy)
             if self.original_goal_xy is not None:
-                self.blacklisted_goals.append(self.original_goal_xy)
+                self.add_to_blacklist(self.original_goal_xy)
             self.retry_count = 0
         self.is_navigating = False
         self.current_goal_handle = None
 
     # ===================== 工具 =====================
+    
+    def add_to_blacklist(self, pos):
+        if pos is None:
+            return
+        if isinstance(pos, tuple) or isinstance(pos, list):
+            x, y = pos
+        else:
+            return
+
+        is_already_covered = False
+        for bx, by in self.blacklisted_goals:
+            if math.hypot(x - bx, y - by) < (self.blacklist_radius * 0.5):
+                is_already_covered = True
+                break
+
+        if not is_already_covered:
+            self.blacklisted_goals.append((x, y))
 
     def get_robot_position(self):
         try:
@@ -860,8 +945,10 @@ class FrontierExplorer(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = FrontierExplorer()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:

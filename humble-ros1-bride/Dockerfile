@@ -28,9 +28,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     dpkg --force-overwrite -i python3-catkin-pkg*.deb python3-rospkg*.deb python3-rosdistro*.deb && \
     rm -f python3-catkin-pkg*.deb python3-rospkg*.deb python3-rosdistro*.deb && \
     apt-get install -f && \
-    eatmydata apt-get install -y --no-install-recommends ros-desktop-dev ros-message-generation ros-message-runtime && \
+    eatmydata apt-get install -y --no-install-recommends ros-desktop-dev libgl-dev libglu1-mesa-dev libopengl-dev && \
+    mkdir -p /usr/lib/pkgconfig /usr/share/pkgconfig /usr/lib/aarch64-linux-gnu/pkgconfig /usr/lib/x86_64-linux-gnu/pkgconfig && \
+    echo -e "Name: message_generation\nDescription: Dummy pkg-config for message_generation\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/lib/pkgconfig/message_generation.pc && \
+    echo -e "Name: message_generation\nDescription: Dummy pkg-config for message_generation\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/share/pkgconfig/message_generation.pc && \
+    echo -e "Name: message_generation\nDescription: Dummy pkg-config for message_generation\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/lib/aarch64-linux-gnu/pkgconfig/message_generation.pc && \
+    echo -e "Name: message_generation\nDescription: Dummy pkg-config for message_generation\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/lib/x86_64-linux-gnu/pkgconfig/message_generation.pc && \
+    echo -e "Name: message_runtime\nDescription: Dummy pkg-config for message_runtime\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/lib/pkgconfig/message_runtime.pc && \
+    echo -e "Name: message_runtime\nDescription: Dummy pkg-config for message_runtime\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/share/pkgconfig/message_runtime.pc && \
+    echo -e "Name: message_runtime\nDescription: Dummy pkg-config for message_runtime\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/lib/aarch64-linux-gnu/pkgconfig/message_runtime.pc && \
+    echo -e "Name: message_runtime\nDescription: Dummy pkg-config for message_runtime\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/lib/x86_64-linux-gnu/pkgconfig/message_runtime.pc && \
     if [[ $(uname -m) = "arm64" || $(uname -m) = "aarch64" ]]; then \
-      cp /usr/lib/x86_64-linux-gnu/pkgconfig/* /usr/lib/aarch64-linux-gnu/pkgconfig/; \
+      cp /usr/lib/x86_64-linux-gnu/pkgconfig/* /usr/lib/aarch64-linux-gnu/pkgconfig/ || true; \
     fi && \
     mv /root/ros2.sources /etc/apt/sources.list.d/ && \
     apt-get update
@@ -162,23 +171,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         ros-humble-action-tutorials-py; \
     fi
 
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && \
-    eatmydata apt-get install -y --no-install-recommends libgl-dev libglu1-mesa-dev libopengl-dev && \
-    mkdir -p /usr/lib/pkgconfig /usr/share/pkgconfig /usr/lib/aarch64-linux-gnu/pkgconfig /usr/lib/x86_64-linux-gnu/pkgconfig && \
-    echo -e "Name: message_generation\nDescription: Dummy pkg-config for message_generation\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/lib/pkgconfig/message_generation.pc && \
-    echo -e "Name: message_generation\nDescription: Dummy pkg-config for message_generation\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/share/pkgconfig/message_generation.pc && \
-    echo -e "Name: message_generation\nDescription: Dummy pkg-config for message_generation\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/lib/aarch64-linux-gnu/pkgconfig/message_generation.pc && \
-    echo -e "Name: message_generation\nDescription: Dummy pkg-config for message_generation\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/lib/x86_64-linux-gnu/pkgconfig/message_generation.pc && \
-    echo -e "Name: message_runtime\nDescription: Dummy pkg-config for message_runtime\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/lib/pkgconfig/message_runtime.pc && \
-    echo -e "Name: message_runtime\nDescription: Dummy pkg-config for message_runtime\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/share/pkgconfig/message_runtime.pc && \
-    echo -e "Name: message_runtime\nDescription: Dummy pkg-config for message_runtime\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/lib/aarch64-linux-gnu/pkgconfig/message_runtime.pc && \
-    echo -e "Name: message_runtime\nDescription: Dummy pkg-config for message_runtime\nVersion: 1.15.14\nCflags:\nLibs:" > /usr/lib/x86_64-linux-gnu/pkgconfig/message_runtime.pc && \
-    if [[ $(uname -m) = "arm64" || $(uname -m) = "aarch64" ]]; then \
-      cp /usr/lib/x86_64-linux-gnu/pkgconfig/* /usr/lib/aarch64-linux-gnu/pkgconfig/ || true; \
-    fi; \
-    source /opt/ros/humble/setup.bash; \
+RUN source /opt/ros/humble/setup.bash; \
     if [[ "$ADD_ros_tutorials" = "1" ]]; then \
       source /ros_tutorials/install/setup.bash; \
       source /common_tutorials/install/setup.bash; \
