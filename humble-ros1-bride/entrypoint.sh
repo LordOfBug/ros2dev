@@ -4,6 +4,21 @@ set -e
 # Source ROS 2 underlay
 source /opt/ros/humble/setup.bash
 
+# Check if launching the bridge, and if so, wait for ROS1 master (port 11311)
+if [ "$#" -eq 0 ] || { [ "$1" = "ros2" ] && [ "$2" = "run" ] && [ "$3" = "ros1_bridge" ]; }; then
+    URI="${ROS_MASTER_URI:-http://localhost:11311}"
+    HOSTPORT="${URI#*//}"
+    HOST="${HOSTPORT%%:*}"
+    PORT="${HOSTPORT##*:}"
+    PORT="${PORT%%/*}"
+
+    echo "Waiting for ROS 1 Master (roscore) at $HOST:$PORT..."
+    until timeout 1 bash -c "cat < /dev/tcp/$HOST/$PORT" 2>/dev/null; do
+        sleep 1
+    done
+    echo "ROS 1 Master is active. Starting the bridge..."
+fi
+
 # Source compiled ROS1 packages (if built)
 if [ -f "/ros_tutorials/install/setup.bash" ]; then
     source /ros_tutorials/install/setup.bash

@@ -45,10 +45,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     python3-colcon-common-extensions \
     ros-humble-nav2-msgs
 
+# Copy local source tarball assets (must run ./download_assets.sh on host first)
+COPY assets/ /assets/
+
 # =========================================================================
 # LAYER 3: Build custom overlays and ros1_bridge
-# Clone, compile, and clean up build-time artifacts to keep the image small.
-# We install git, perform our checkouts/builds, and purge git afterwards.
+# Unpack, compile, and clean up build-time artifacts to keep the image small.
 # =========================================================================
 ARG ADD_ros_tutorials=1
 ARG ADD_custom_action_mapping=1
@@ -56,50 +58,47 @@ ARG ADD_custom_action_mapping=1
 # Use bash for shell commands to enable sourcing setup files
 SHELL ["/bin/bash", "-o", "pipefail", "-o", "errexit", "-c"]
 
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    eatmydata apt-get install -y --no-install-recommends git && \
-    # \
+RUN # \
     # 3.1) Build ros_tutorials (ROS 1) \
     if [[ "$ADD_ros_tutorials" = "1" ]]; then \
-      git clone -b noetic-devel --depth=1 https://github.com/ros/ros_tutorials.git /ros_tutorials; \
+      mkdir -p /ros_tutorials && tar -xzf /assets/ros_tutorials.tar.gz -C /ros_tutorials --strip-components=1; \
       cd /ros_tutorials; \
       unset ROS_DISTRO; \
       colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release; \
-      mv install /tmp_install && rm -rf * && mv /tmp_install install; \
+      if [[ "$PWD" = "/ros_tutorials" ]]; then mv install /tmp_install && rm -rf * && mv /tmp_install install; fi; \
       \
       source /ros_tutorials/install/setup.bash; \
-      git clone -b fuerte-devel --depth=1 https://github.com/ros/common_tutorials.git /common_tutorials; \
+      mkdir -p /common_tutorials && tar -xzf /assets/common_tutorials.tar.gz -C /common_tutorials --strip-components=1; \
       cd /common_tutorials; \
       unset ROS_DISTRO; \
       colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release; \
-      mv install /tmp_install && rm -rf * && mv /tmp_install install; \
-    fi && \
+      if [[ "$PWD" = "/common_tutorials" ]]; then mv install /tmp_install && rm -rf * && mv /tmp_install install; fi; \
+    fi; \
     # \
     # 3.2) Build custom action mapping \
     if [[ "$ADD_custom_action_mapping" = "1" ]]; then \
-      git clone --depth=1 -b kinetic-devel https://github.com/ros-controls/control_msgs.git /control_msgs_ros1; \
+      mkdir -p /control_msgs_ros1 && tar -xzf /assets/control_msgs_ros1.tar.gz -C /control_msgs_ros1 --strip-components=1; \
       cd /control_msgs_ros1; \
       unset ROS_DISTRO; \
       colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release; \
-      mv install /tmp_install && rm -rf * && mv /tmp_install install; \
+      if [[ "$PWD" = "/control_msgs_ros1" ]]; then mv install /tmp_install && rm -rf * && mv /tmp_install install; fi; \
       \
-      git clone --depth=1 -b humble https://github.com/ros-controls/control_msgs.git /control_msgs_ros2; \
+      mkdir -p /control_msgs_ros2 && tar -xzf /assets/control_msgs_ros2.tar.gz -C /control_msgs_ros2 --strip-components=1; \
       cd /control_msgs_ros2; \
       source /opt/ros/humble/setup.bash; \
       colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release; \
-      mv install /tmp_install && rm -rf * && mv /tmp_install install; \
+      if [[ "$PWD" = "/control_msgs_ros2" ]]; then mv install /tmp_install && rm -rf * && mv /tmp_install install; fi; \
       \
-      mkdir -p /custom_action/src; \
-      git clone --depth=1 https://github.com/smith-doug/bridge_mapping.git /custom_action/src/bridge_mapping; \
+      mkdir -p /custom_action/src/bridge_mapping; \
+      tar -xzf /assets/bridge_mapping.tar.gz -C /custom_action/src/bridge_mapping --strip-components=1; \
       cd /custom_action; \
       source /opt/ros/humble/setup.bash; \
       colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release; \
-      mv install /tmp_install && rm -rf * && mv /tmp_install install; \
-    fi && \
+      if [[ "$PWD" = "/custom_action" ]]; then mv install /tmp_install && rm -rf * && mv /tmp_install install; fi; \
+    fi; \
     # \
     # 3.3) Build ros1_bridge \
-    source /opt/ros/humble/setup.bash && \
+    source /opt/ros/humble/setup.bash; \
     if [[ "$ADD_ros_tutorials" = "1" ]]; then \
       source /ros_tutorials/install/setup.bash; \
       source /common_tutorials/install/setup.bash; \
@@ -109,25 +108,25 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         ros-humble-action-tutorials-cpp \
         ros-humble-action-tutorials-py; \
       source /opt/ros/humble/setup.bash; \
-    fi && \
+    fi; \
     if [[ "$ADD_custom_action_mapping" = "1" ]]; then \
       source /control_msgs_ros1/install/setup.bash; \
       source /control_msgs_ros2/install/setup.bash; \
       source /custom_action/install/setup.bash; \
-    fi && \
-    mkdir -p /ros-humble-ros1-bridge/src; \
-    git clone -b action_bridge_humble --depth=1 https://github.com/smith-doug/ros1_bridge.git /ros-humble-ros1-bridge/src/ros1_bridge; \
+    fi; \
+    mkdir -p /ros-humble-ros1-bridge/src/ros1_bridge; \
+    tar -xzf /assets/ros1_bridge.tar.gz -C /ros-humble-ros1-bridge/src/ros1_bridge --strip-components=1; \
     cd /ros-humble-ros1-bridge; \
     MEMG=$(printf "%.0f" $(free -g | awk '/^Mem:/{print $2}')); \
     NPROC=$(nproc); MIN=$((MEMG<NPROC ? MEMG : NPROC)); \
     [[ $MIN -lt 1 ]] && MIN=1; \
     echo "Running $MIN concurrent jobs to build ros1_bridge"; \
-    time MAKEFLAGS="-j $MIN" colcon build --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Release && \
-    mv install /tmp_install && rm -rf * && mv /tmp_install install; \
+    time MAKEFLAGS="-j $MIN" colcon build --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Release; \
+    if [[ "$PWD" = "/ros-humble-ros1-bridge" ]]; then mv install /tmp_install && rm -rf * && mv /tmp_install install; fi; \
     # \
-    # 3.4) Purge git and other build tools to clean image \
-    apt-get purge -y --auto-remove git && \
-    apt-get clean all && \
+    # 3.4) Clean up /assets and apt lists \
+    rm -rf /assets; \
+    apt-get clean all; \
     rm -rf /var/lib/apt/lists/*
 
 # Set standard workspace directory

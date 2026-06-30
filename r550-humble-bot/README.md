@@ -1,42 +1,65 @@
-## Build command
-docker buildx build --platform linux/arm64 -t r550-humble-bot:latest --load .
+# R550 ROS 2 Humble Bot Container
 
+This directory contains the Docker environment for running the ROS 2 Humble navigation and driver stack on the R550 robot.
 
-## Cross Build
+---
 
- [ Ubuntu 开发 PC (x86_64) ] 
-       │
-       ▼ (使用 QEMU 虚拟出 ARM64 指令环境)
- [ Docker Buildx 交叉编译器 ] ──( 极速编译 )──> [ 生成物理 linux/arm64 镜像 ]
-                                                            │
-                                              ┌─────────────┴─────────────┐
-                                              ▼ (方法 A: 局域网离线 Tar)     ▼ (方法 B: 云端 Push)
-                                        [ scp 传输 .tar 压缩包 ]      [ Docker Hub 镜像站 ]
-                                              │                           │
-                                              └─────────────┬─────────────┘
-                                                            ▼ (直接导入并免编译启动)
-                                                 [ R550 物理小车 (ARM64) ]
+## Build Commands
 
+To build the image natively or using an existing local builder:
+```bash
+docker buildx build --platform linux/arm64 -t r550-humble-bot:latest .
+```
 
-### Steps
+---
 
-# 1. 安装 QEMU 虚拟仿真基础包
-sudo apt-get update
-sudo apt-get install -y qemu-user-static binfmt-support
+## Cross-Platform Build Workflow
 
-# 2. 向 Docker 注册 QEMU 静态解析器（一锤定音 🔨）
-docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+When developing on a standard x86_64 development PC, you can compile the target ARM64 image using QEMU emulation:
 
-# 1. 创建一个名为 r550_builder 的多平台构建器
-docker buildx create --name r550_builder --use
+```
+ [ Ubuntu Dev PC (x86_64) ] 
+            │
+            ▼ (QEMU emulating ARM64 instructions)
+ [ Docker Buildx Cross-Compiler ] ──( Fast Compile )──> [ Physical linux/arm64 Image ]
+                                                                 │
+                                                   ┌─────────────┴─────────────┐
+                                                   ▼ (Method A: LAN Offline)   ▼ (Method B: Cloud Push)
+                                             [ scp .tar package ]        [ Docker Registry ]
+                                                   │                           │
+                                                   └─────────────┬─────────────┘
+                                                                 ▼ (Import and Run)
+                                                      [ R550 Robot (ARM64) ]
+```
 
-# 2. 启动并初始化该构建器
-docker buildx inspect --bootstrap
+### Steps for Setup & Compilation
 
-运行后，在终端打印的 Platforms 列表中，只要看到 linux/arm64 和 linux/amd64，说明你的电脑已经完美具备了跨平台编译能力！
+Follow these steps on your development PC to set up the multi-platform builder and build the image:
 
-docker buildx build --platform linux/arm64 -t r550-humble-bot:latest --load .
+1. **Install QEMU emulation support packages:**
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y qemu-user-static binfmt-support
+   ```
 
---load 参数会强制把编译好的 ARM 镜像塞进你电脑的 docker images 仓库中
+2. **Register QEMU static interpreters with Docker:**
+   ```bash
+   docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+   ```
 
+3. **Create and select a new multi-platform builder instance:**
+   ```bash
+   docker buildx create --name r550_builder --use
+   ```
 
+4. **Initialize the builder:**
+   ```bash
+   docker buildx inspect --bootstrap
+   ```
+   *Note: In the printed output under `Platforms`, verify that both `linux/arm64` and `linux/amd64` are listed. This indicates that your builder is ready for cross-compiling.*
+
+5. **Build and load the image into your local docker registry:**
+   ```bash
+   docker buildx build --platform linux/arm64 -t r550-humble-bot:latest --load .
+   ```
+   *Note: The `--load` flag directs the builder to export the compiled ARM64 image back into your local machine's docker image store.*
