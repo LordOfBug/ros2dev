@@ -1,22 +1,43 @@
 # syntax=docker/dockerfile:1
-# Use the official hardware-optimized ARM64 ROS 2 Humble base image
-FROM arm64v8/ros:humble-perception
 
-# Prevent interactive prompts during apt installations
+# =========================================================================
+# STAGE 1: Builder (Compiles source code under emulation)
+# =========================================================================
+FROM arm64v8/ros:humble-perception AS builder
+
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Install build dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    python3-colcon-common-extensions \
+    libpcap-dev
+
+# Setup workspace
+WORKDIR /workspace
+
+# Copy Lslidar ROS2 driver source code
+COPY assets/Lslidar_ROS2_driver /workspace/src/Lslidar_ROS2_driver
+
+# Compile the driver workspace (release mode)
+RUN . /opt/ros/humble/setup.sh && \
+    colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+
 # =========================================================================
+# STAGE 2: Runner (Clean, optimized production image for the robot)
+# =========================================================================
+FROM arm64v8/ros:humble-perception
+
+ENV DEBIAN_FRONTEND=noninteractive
+
 # SYSTEM LAYER: Base acceleration packages
-# Mounts the host package caches to completely bypass slow re-indexing
-# =========================================================================
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends eatmydata
 
-# =========================================================================
 # LAYER 1: Core Navigation & Heavy Stacks (Permanently Cached 🛡️)
-# This takes 15+ minutes on a clean run, but will NEVER be redownloaded.
-# =========================================================================
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && eatmydata apt-get install -y --no-install-recommends \
@@ -25,10 +46,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ros-humble-navigation2 \
     ros-humble-nav2-common
 
-# =========================================================================
 # LAYER 2: Modeling, States, & Math Tools (Cached unless modified 📦)
-# Standard modeling layout items.
-# =========================================================================
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     eatmydata apt-get install -y --no-install-recommends \
@@ -38,17 +56,19 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ros-humble-tf-transformations \
     python3-transforms3d
 
-# =========================================================================
 # LAYER 3: Dynamic Hardware Drivers & Testing (Fast Iteration Zone ⚡)
-# If you add or remove packages here, BuildKit will resolve dependencies 
-# incrementally in seconds using the cached apt index! No 'rm' cleanup needed!
-# =========================================================================
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     eatmydata apt-get install -y --no-install-recommends \
     ros-humble-imu-filter-madgwick \
     ros-humble-robot-localization \
-    ros-humble-teleop-twist-keyboard
+    ros-humble-teleop-twist-keyboard \
+    ros-humble-orbbec-camera \
+    ros-humble-depthimage-to-laserscan \
+    libpcap-dev
+
+# Copy the compiled binaries and installations from the builder stage
+COPY --from=builder /workspace/install /workspace/install
 
 # Set the default workspace folder
 WORKDIR /workspace

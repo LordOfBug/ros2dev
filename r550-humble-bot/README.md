@@ -6,7 +6,12 @@ This directory contains the Docker environment for running the ROS 2 Humble navi
 
 ## Build Commands
 
-To build the image natively or using an existing local builder:
+To build the image (which will automatically clone/update the required `Lslidar_ROS2_driver` dependency into an `assets` folder before building):
+```bash
+./release.sh
+```
+
+Alternatively, to build manually if the assets are already populated:
 ```bash
 docker buildx build --platform linux/arm64 -t r550-humble-bot:latest .
 ```
