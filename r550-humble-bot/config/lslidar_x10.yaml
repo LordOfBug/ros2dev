@@ -1,0 +1,38 @@
+# Custom Lslidar N10 configuration
+# Mounted at runtime to override default package configuration
+
+x10:  
+  lslidar_driver_node:
+    ros__parameters:
+      lidar_type: "X10"           # Lidar Type (X10 series)
+      lidar_model: "N10"          # Lidar Model (M10, M10GPS, M10P, N10, N10Plus, N301)
+      serial_port: "/dev/wheeltec_lidar" # Serial port (set to empty string to use Ethernet instead)
+      device_ip: "192.168.1.200"  # Lidar IP Address (not used for serial mode)
+      msop_port: 2368             # Lidar destination data port
+      difop_port: 2369            # Lidar destination device port
+      packet_rate: 188.0          
+      
+      # Laser Scan Topic and Frames
+      frame_id: "laser_link"      
+      pointcloud_topic: "lslidar_point_cloud"  
+      laserscan_topic: "scan"     # Publishes to standard /scan topic
+      use_time_service: false     
+      use_first_point_time: false 
+      publish_scan: true          
+      use_high_precision: true    # Enable high precision mode (recommended for N10)
+      publish_multiecholaserscan: false  
+      enable_noise_filter: true   # Enable noise filtering to clean up points
+      
+      min_range: 0.15             # Minimum scan range (meters)
+      max_range: 12.0             # Maximum scan range (meters, N10 range)
+      angle_disable_min: 0        
+      angle_disable_max: 0        
+
+      # Coordinate offsets
+      is_pretreatment: false      
+      x_offset: 0.0               
+      y_offset: 0.0               
+      z_offset: 0.0               
+      roll: 0.0                   
+      pitch: 0.0                  
+      yaw: 0.0                    

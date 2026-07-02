@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # =========================================================================
+  # Service 1: R550 Chassis and LiDAR Hardware Drivers
+  # =========================================================================
+  r550_drivers:
+    image: r550-humble-bot:latest
+    container_name: r550_drivers
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    ipc: host
+    environment:
+      - ROS_DOMAIN_ID=0
+    volumes:
+      # Mount custom N10 configuration to override package defaults
+      - ./config/lslidar_x10.yaml:/workspace/install/share/lslidar_driver/config/lslidar_x10.yaml:ro
+    devices:
+      # 1. STM32 Chassis Controller (ttyACM0 -> wheeltec_controller)
+      - /dev/wheeltec_controller:/dev/wheeltec_controller
+      # 2. Lslidar N10 Laser Scanner (ttyUSB1 -> wheeltec_lidar)
+      - /dev/wheeltec_lidar:/dev/wheeltec_lidar
+      # 3. IMU/GPS Module (ttyUSB0 -> wheeltec_gps)
+      - /dev/wheeltec_gps:/dev/wheeltec_gps
+    command: >
+      bash -c "
+      echo '🔌 Sourcing workspace...' &&
+      source /opt/ros/humble/setup.bash &&
+      source /workspace/install/setup.bash &&
+      echo '🤖 Starting Wheeltec STM32 Chassis Driver Node...' &&
+      ros2 launch turn_on_wheeltec_robot turn_on_wheeltec_robot.launch.py &
+      echo '📡 Starting Lslidar N10 Driver Node...' &&
+      ros2 launch lslidar_driver lslidar_x10_launch.py &
+      wait
+      "
+
+  # =========================================================================
+  # Service 2: Orbbec Astra Depth Camera (Optional)
+  # =========================================================================
+  r550_camera:
+    image: r550-humble-bot:latest
+    container_name: r550_camera
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    ipc: host
+    environment:
+      - ROS_DOMAIN_ID=0
+    devices:
+      # Mount whole USB bus for LibUSB camera interface
+      - /dev/bus/usb:/dev/bus/usb
+      # Optional: Mount specific symlink if created
+      - /dev/astra_s:/dev/astra_s
+    command: >
+      bash -c "
+      echo '🔌 Sourcing workspace...' &&
+      source /opt/ros/humble/setup.bash &&
+      source /workspace/install/setup.bash &&
+      echo '📷 Starting Orbbec Astra Depth Camera Node...' &&
+      ros2 launch orbbec_camera astra.launch.py
+      "

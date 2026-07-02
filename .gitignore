@@ -7,3 +7,8 @@ __pycache__/
 build/
 install/
 log/
+
+# Docker build assets and cache
+r550-humble-bot/assets/
+r550-humble-bot/assets_cache/
+

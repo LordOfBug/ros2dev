@@ -13,15 +13,38 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     python3-colcon-common-extensions \
-    libpcap-dev
+    libpcap-dev \
+    ros-humble-turtlesim \
+    ros-humble-nav2-msgs \
+    ros-humble-navigation2 \
+    ros-humble-nav2-common \
+    ros-humble-joint-state-publisher \
+    ros-humble-robot-state-publisher \
+    ros-humble-xacro \
+    ros-humble-tf-transformations \
+    python3-transforms3d \
+    ros-humble-imu-filter-madgwick \
+    ros-humble-robot-localization \
+    ros-humble-teleop-twist-keyboard \
+    ros-humble-orbbec-camera \
+    ros-humble-depthimage-to-laserscan
 
 # Setup workspace
 WORKDIR /workspace
 
-# Copy Lslidar ROS2 driver source code
-COPY assets/Lslidar_ROS2_driver /workspace/src/Lslidar_ROS2_driver
+# 1. Copy stable dependency packages first (cached layer)
+COPY assets/serial-ros2 /workspace/src/serial-ros2
+COPY assets/rplidar_ros /workspace/src/rplidar_ros
+COPY assets/wheeltec_robot_msg /workspace/src/wheeltec_robot_msg
 
-# Compile the driver workspace (release mode)
+# Compile stable dependencies
+RUN . /opt/ros/humble/setup.sh && \
+    colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+# 2. Copy the remaining driver packages
+COPY assets/ /workspace/src/
+
+# Compile the remaining packages (colcon will skip the already compiled ones)
 RUN . /opt/ros/humble/setup.sh && \
     colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 
