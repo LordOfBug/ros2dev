@@ -2,61 +2,80 @@ version: '3.8'
 
 services:
   # =========================================================================
-  # Service 1: R550 Chassis and LiDAR Hardware Drivers
+  # Service 1: R550 Chassis STM32 Motor Controller & IMU
   # =========================================================================
-  r550_drivers:
-    image: r550-humble-bot:latest
-    container_name: r550_drivers
+  r550_chassis:
+    image: registry.cn-chengdu.aliyuncs.com/zpdemo/r550-humble-bot:latest
+    container_name: r550_chassis
     restart: unless-stopped
     network_mode: host
     privileged: true
     ipc: host
     environment:
-      - ROS_DOMAIN_ID=0
-    volumes:
-      # Mount custom N10 configuration to override package defaults
-      - ./config/lslidar_x10.yaml:/workspace/install/share/lslidar_driver/config/lslidar_x10.yaml:ro
+      - ROS_DOMAIN_ID=55 # 🌟 统一对齐 Domain 55 频道，防止局域网内其他零碎节点串频
+        # - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp # 🌟 强制使用 CycloneDDS，彻底防止 docker0 网卡劫持信号
     devices:
       # 1. STM32 Chassis Controller (ttyACM0 -> wheeltec_controller)
       - /dev/wheeltec_controller:/dev/wheeltec_controller
-      # 2. Lslidar N10 Laser Scanner (ttyUSB1 -> wheeltec_lidar)
-      - /dev/wheeltec_lidar:/dev/wheeltec_lidar
-      # 3. IMU/GPS Module (ttyUSB0 -> wheeltec_gps)
+      # 2. IMU/GPS Module (ttyUSB0 -> wheeltec_gps)
       - /dev/wheeltec_gps:/dev/wheeltec_gps
     command: >
       bash -c "
-      echo '🔌 Sourcing workspace...' &&
       source /opt/ros/humble/setup.bash &&
       source /workspace/install/setup.bash &&
-      echo '🤖 Starting Wheeltec STM32 Chassis Driver Node...' &&
-      ros2 launch turn_on_wheeltec_robot turn_on_wheeltec_robot.launch.py &
-      echo '📡 Starting Lslidar N10 Driver Node...' &&
-      ros2 launch lslidar_driver lslidar_x10_launch.py &
-      wait
+      echo '🏎️  Starting Wheeltec STM32 Chassis Driver Node...' &&
+      ros2 launch turn_on_wheeltec_robot turn_on_wheeltec_robot.launch.py
       "
 
   # =========================================================================
-  # Service 2: Orbbec Astra Depth Camera (Optional)
+  # Service 2: Lslidar N10 Laser Scanner
+  # =========================================================================
+  r550_lidar:
+    image: registry.cn-chengdu.aliyuncs.com/zpdemo/r550-humble-bot:latest
+    container_name: r550_lidar
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    ipc: host
+    environment:
+      - ROS_DOMAIN_ID=55
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    volumes:
+      # Mount custom N10 configuration to override package defaults (Working perfectly under --merge-install)
+      - ./config/lslidar_x10.yaml:/workspace/install/share/lslidar_driver/config/lslidar_x10.yaml:ro
+    devices:
+      # Lslidar N10 Laser Scanner (ttyUSB1 -> wheeltec_lidar)
+      - /dev/wheeltec_lidar:/dev/wheeltec_lidar
+    command: >
+      bash -c "
+      source /opt/ros/humble/setup.bash &&
+      source /workspace/install/setup.bash &&
+      echo '📡 Starting Lslidar N10 Driver Node...' &&
+      ros2 launch lslidar_driver lslidar_x10_launch.py
+      "
+
+  # =========================================================================
+  # Service 3: Orbbec Astra Depth Camera
   # =========================================================================
   r550_camera:
-    image: r550-humble-bot:latest
+    image: registry.cn-chengdu.aliyuncs.com/zpdemo/r550-humble-bot:latest
     container_name: r550_camera
     restart: unless-stopped
     network_mode: host
     privileged: true
     ipc: host
     environment:
-      - ROS_DOMAIN_ID=0
+      - ROS_DOMAIN_ID=55
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
     devices:
-      # Mount whole USB bus for LibUSB camera interface
+      # 🌟 黄金修复 3：在 privileged 模式下，挂载整条物理 USB 总线即可！
+      # 绝不能额外挂载可选的 /dev/astra_s，否则一旦相机没插好或断电，Docker 就会因设备不存在直接启动失败！
       - /dev/bus/usb:/dev/bus/usb
-      # Optional: Mount specific symlink if created
-      - /dev/astra_s:/dev/astra_s
     command: >
       bash -c "
-      echo '🔌 Sourcing workspace...' &&
       source /opt/ros/humble/setup.bash &&
       source /workspace/install/setup.bash &&
-      echo '📷 Starting Orbbec Astra Depth Camera Node...' &&
+      echo '📸 Starting Orbbec Astra Depth Camera Node...' &&
       ros2 launch orbbec_camera astra.launch.py
       "
+
