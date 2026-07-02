@@ -16,10 +16,10 @@ def generate_launch_description():
     # 3. 定位我们在 Canvas 中设计好的核心配置文件 (nav2_params.yaml)
     params_file_path = os.path.join(pkg_share, 'config', 'nav2_params.yaml')
 
-    # 4. 声明启动参数，确保默认开启仿真时间 (use_sim_time:=True)
+    # 4. 声明启动参数，默认关闭仿真时间 (use_sim_time:=False，适配真机测试)
     declare_use_sim_time = DeclareLaunchArgument(
         'use_sim_time',
-        default_value='true',
+        default_value='false',
         description='Use simulation (Gazebo) clock if true'
     )
 

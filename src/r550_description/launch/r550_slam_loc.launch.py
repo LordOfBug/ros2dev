@@ -1,9 +1,18 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 def generate_launch_description():
+    use_sim_time = LaunchConfiguration('use_sim_time')
+    
+    declare_use_sim_time = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='false',
+        description='Use simulation (Gazebo) clock if true'
+    )
     pkg_share = get_package_share_directory('r550_description')
 
     # 地图文件路径 (由 SLAM mapping 模式生成并保存)
@@ -18,7 +27,7 @@ def generate_launch_description():
         name='map_server',
         output='screen',
         parameters=[{
-            'use_sim_time': True,
+            'use_sim_time': use_sim_time,
             'yaml_filename': map_file,
         }]
     )
@@ -29,8 +38,8 @@ def generate_launch_description():
     #    仅输出 map→odom 变换来纠正里程计漂移
     # ========================================================
     slam_params = {
-        'use_sim_time': True,
-        'odom_frame': 'odom',
+        'use_sim_time': use_sim_time,
+        'odom_frame': 'odom_combined',
         'map_frame': 'map',
         'base_frame': 'base_footprint',
         'scan_topic': '/scan',
@@ -74,13 +83,14 @@ def generate_launch_description():
         name='lifecycle_manager_localization',
         output='screen',
         parameters=[{
-            'use_sim_time': True,
+            'use_sim_time': use_sim_time,
             'autostart': True,
             'node_names': ['map_server'],
         }]
     )
 
     return LaunchDescription([
+        declare_use_sim_time,
         node_map_server,
         node_lifecycle_manager,
         node_slam_toolbox,

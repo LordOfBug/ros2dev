@@ -1,14 +1,24 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 def generate_launch_description():
+    use_sim_time = LaunchConfiguration('use_sim_time')
+    
+    declare_use_sim_time = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='false',
+        description='Use simulation (Gazebo) clock if true'
+    )
+
     # 1. 声明 SLAM Toolbox 的核心运行参数
     # 这些参数直接写在脚本里，免去了额外加载复杂参数配置文件的麻烦，确保 100% 顺畅运行！
     slam_params = {
-        'use_sim_time': True,          # 在 Gazebo 仿真中必须设置为 True，使用仿真时钟
-        'odom_frame': 'odom',          # 里程计坐标系
+        'use_sim_time': use_sim_time,          # 在 Gazebo 仿真中必须设置为 True，使用仿真时钟
+        'odom_frame': 'odom_combined',          # 里程计坐标系
         'map_frame': 'map',            # 地图坐标系
         'base_frame': 'base_footprint',# 机器人底盘投影坐标系
         'scan_topic': '/scan',         # 订阅的雷达通道
@@ -43,5 +53,6 @@ def generate_launch_description():
 
     # 3. 组装任务清单
     return LaunchDescription([
+        declare_use_sim_time,
         node_slam_toolbox
     ])

@@ -1,8 +1,18 @@
 import os
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 def generate_launch_description():
+    use_sim_time = LaunchConfiguration('use_sim_time')
+    
+    declare_use_sim_time = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='false',
+        description='Use simulation (Gazebo) clock if true'
+    )
+
     # Frontier Explorer 自主探索节点
     # 订阅 /map 检测未知边界，通过 Nav2 驱动机器人自动建图
     node_explorer = Node(
@@ -11,7 +21,7 @@ def generate_launch_description():
         name='frontier_explorer',
         output='screen',
         parameters=[{
-            'use_sim_time': True,
+            'use_sim_time': use_sim_time,
             'min_frontier_size': 5,       # 最小 frontier 集群大小（过滤噪声）
             'exploration_timeout': 120.0, # 单次导航超时（秒）
             'robot_frame': 'base_footprint',
@@ -23,5 +33,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        declare_use_sim_time,
         node_explorer
     ])
