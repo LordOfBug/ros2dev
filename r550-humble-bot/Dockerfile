@@ -6,6 +6,7 @@
 FROM arm64v8/ros:humble-perception AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
 # Install build dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -27,7 +28,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ros-humble-robot-localization \
     ros-humble-teleop-twist-keyboard \
     ros-humble-orbbec-camera \
-    ros-humble-depthimage-to-laserscan
+    ros-humble-depthimage-to-laserscan \
+    ros-humble-rmw-cyclonedds-cpp
 
 # Setup workspace
 WORKDIR /workspace
@@ -54,6 +56,7 @@ RUN . /opt/ros/humble/setup.sh && \
 FROM arm64v8/ros:humble-perception
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
 # SYSTEM LAYER: Base acceleration packages
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -88,6 +91,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ros-humble-teleop-twist-keyboard \
     ros-humble-orbbec-camera \
     ros-humble-depthimage-to-laserscan \
+    ros-humble-rmw-cyclonedds-cpp \
     libpcap-dev
 
 # Copy the compiled binaries and installations from the builder stage

@@ -186,3 +186,109 @@ ros2 topic list
 # Echo the scan data to verify N10 output
 ros2 topic echo /scan --limit 1
 ```
+
+---
+
+## Troubleshooting
+
+### Chassis Serial Port Fails to Open (`PortNotOpenedException`)
+
+If your chassis driver node crashes with the following error:
+```
+[wheeltec_robot_node-4] [ERROR] [wheeltec_robot]: wheeltec_robot can not open serial port, Please check the serial port cable!
+terminate called after throwing an instance of 'serial::PortNotOpenedException'
+  what():  PortNotOpenedException Serial::read failed.
+```
+
+This error means the ROS 2 application layer initialized successfully (i.e. the RMW middleware layer found its DDS files), but the C++ driver failed to establish a low-level physical connection to the STM32 board. Follow these troubleshooting steps:
+
+---
+
+#### 1. Container Device Mapping & USB Hotplugging (Recommended Solution)
+
+##### The Problem with Static `devices:` Mapping
+If your `docker-compose.yaml` maps USB ports individually using the `devices:` keyword (e.g. `- /dev/wheeltec_controller:/dev/wheeltec_controller`):
+* Docker resolves the symlink `/dev/wheeltec_controller` on the host to its physical device (e.g. `/dev/ttyACM0`) **only at the exact moment the container starts**.
+* If the USB connection drops even briefly (e.g. power fluctuation, board reboot, or cable jiggling), the device is reconnected on the host, but the container's mapped file descriptor becomes a **dangling/dead node**.
+* The container will no longer be able to open or read the device until the entire container is restarted.
+
+##### The Solution: Mount `/dev:/dev` as a Volume
+To handle dynamic USB reconnects, udev rules, and symlinks in real-time, configure the services to mount the host's `/dev` directory as a volume under `privileged: true` mode:
+```yaml
+    privileged: true
+    volumes:
+      - /dev:/dev
+```
+
+##### Will this cause device sharing/contention between containers?
+**No.** Mounting `/dev:/dev` simply makes the hardware nodes visible to the filesystems of all containers (just like on the host OS). The Linux kernel controls device locking. Since your containers run completely separate ROS 2 nodes targeting separate physical devices:
+* `r550_chassis` only attempts to open `/dev/wheeltec_controller` and `/dev/wheeltec_gps`.
+* `r550_lidar` only attempts to open `/dev/wheeltec_lidar` (or `/dev/ttyUSB1`).
+* `r550_camera` only targets the USB camera bus.
+There is **no resource collision**, and each container safely opens its own isolated hardware channel.
+
+---
+
+#### 2. Check for Conflicting Native Services (ROS 1)
+If you have a native ROS 1 stack installed on the robot host (running as a systemd service like `turn.service`), it will automatically claim `/dev/wheeltec_controller` at boot. Only one process can bind to a serial port at a time.
+
+Ensure the ROS 1 service is fully stopped:
+```bash
+# Stop the native driver service
+sudo systemctl stop turn.service
+
+# Verify no other background python/C++ nodes are holding the port
+ps aux | grep -E "wheeltec|ros"
+```
+
+---
+
+#### 3. Verify Baud Rate Mismatch
+If the port is free but still fails to open, there is likely a baud rate mismatch between your ROS 2 launch file and the flashed STM32 microcontroller firmware. By default, the ROS 2 chassis driver is configured for `115200` bps in `base_serial.launch.py`, but many Wheeltec boards are flashed for `921600` bps.
+
+To find the working parameters from the native ROS 1 environment on the host:
+
+* **Option A: Query Parameter Server (If ROS 1 is active)**
+  If you temporarily start the native service, source the host ROS 1 environment and inspect the parameters:
+  ```bash
+  source /opt/ros/<ros1-distro>/setup.bash
+  rosparam get /wheeltec_robot/serial_baud_rate
+  rosparam get /wheeltec_robot/usart_port_name
+  ```
+  *Note: To list all active serial/baud parameters:*
+  ```bash
+  rosparam list | grep -E "baud|port|scale"
+  ```
+
+* **Option B: Search and Inspect Native Launch Files**
+  If the ROS 1 service is stopped and the environment is not sourced, search the robot's local filesystem to locate the native files:
+  ```bash
+  # Locate the package directory
+  rospack find turn_on_wheeltec_robot
+  
+  # Or perform a generic file search on the host if ROS 1 commands are not in your path:
+  find / -name "turn_on_wheeltec_robot" 2>/dev/null
+  find / -name "*wheeltec_robot.launch" 2>/dev/null
+  ```
+  Once you find the package folder, check `launch/include/base_serial.launch` or `launch/turn_on_wheeltec_robot.launch`:
+  ```bash
+  cat <path_to_package>/launch/include/base_serial.launch
+  ```
+  Look for `<param name="baud_rate" value="XXXXXX"/>` and update the `serial_baud_rate` parameter in your ROS 2 launch file (`base_serial.launch.py`) to match.
+
+---
+
+#### 4. Stale Lock Files
+A crash or forceful termination of a serial-based program can leave stale lock files in the system's lock directories. The C++ `serial` library checks these directories before opening a port and will fail if a lock exists.
+
+Check for and delete stale lock files on the host:
+```bash
+# List all locks
+ls -la /var/lock/
+ls -la /var/spool/lock/
+
+# Look for files matching your serial interface (e.g. LCK..ttyACM0)
+# If no active process is running, delete them:
+sudo rm /var/lock/LCK..ttyACM0
+```
+
