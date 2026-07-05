@@ -27,10 +27,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ros-humble-imu-filter-madgwick \
     ros-humble-robot-localization \
     ros-humble-teleop-twist-keyboard \
-    ros-humble-orbbec-camera \
+    ros-humble-image-geometry \
+    ros-humble-image-publisher \
     ros-humble-depthimage-to-laserscan \
     ros-humble-rmw-cyclonedds-cpp \
-    ros-humble-diagnostic-updater
+    ros-humble-diagnostic-updater \
+    libgflags-dev \
+    libgoogle-glog-dev \
+    libuvc-dev \
+    libusb-1.0-0-dev \
+    libeigen3-dev
 
 # Setup workspace
 WORKDIR /workspace
@@ -90,10 +96,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ros-humble-imu-filter-madgwick \
     ros-humble-robot-localization \
     ros-humble-teleop-twist-keyboard \
-    ros-humble-orbbec-camera \
+    ros-humble-image-geometry \
+    ros-humble-image-publisher \
     ros-humble-depthimage-to-laserscan \
     ros-humble-rmw-cyclonedds-cpp \
     ros-humble-diagnostic-updater \
+    libgflags-dev \
+    libgoogle-glog-dev \
+    libuvc-dev \
+    libusb-1.0-0-dev \
+    libeigen3-dev \
     libpcap-dev
 
 # Copy the compiled binaries and installations from the builder stage

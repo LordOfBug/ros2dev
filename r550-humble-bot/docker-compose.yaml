@@ -71,6 +71,6 @@ services:
       bash -c "
       source /opt/ros/humble/setup.bash &&
       source /workspace/install/setup.bash &&
-      echo '📸 Starting Orbbec Astra Depth Camera Node...' &&
-      ros2 launch orbbec_camera astra.launch.py color_fps:=30 color_format:=UYVY depth_fps:=30
+      echo '📸 Starting Astra S Depth Camera Node (OpenNI2)...' &&
+      ros2 launch astra_camera astra.launch.xml
       "
