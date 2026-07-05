@@ -29,7 +29,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ros-humble-teleop-twist-keyboard \
     ros-humble-orbbec-camera \
     ros-humble-depthimage-to-laserscan \
-    ros-humble-rmw-cyclonedds-cpp
+    ros-humble-rmw-cyclonedds-cpp \
+    ros-humble-diagnostic-updater
 
 # Setup workspace
 WORKDIR /workspace
@@ -92,6 +93,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ros-humble-orbbec-camera \
     ros-humble-depthimage-to-laserscan \
     ros-humble-rmw-cyclonedds-cpp \
+    ros-humble-diagnostic-updater \
     libpcap-dev
 
 # Copy the compiled binaries and installations from the builder stage

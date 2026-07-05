@@ -41,6 +41,9 @@ manage_repo "git@github.com:Lslidar/Lslidar_ROS2_driver.git" "LS-S1_V1.0" "asset
 # 2. Clone RPLiDAR ROS2 driver (branch: ros2)
 manage_repo "git@github.com:Slamtec/rplidar_ros.git" "ros2" "assets/rplidar_ros"
 
+# 2b. Clone legacy OrbbecSDK ROS2 driver (branch: main)
+manage_repo "git://github.com/orbbec/OrbbecSDK_ROS2.git" "main" "assets/OrbbecSDK_ROS2"
+
 # 3. Clone serial port driver
 if [ ! -d "assets/serial-ros2" ]; then
     echo "=================================================="

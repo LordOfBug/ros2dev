@@ -18,6 +18,7 @@ def generate_launch_description():
                                     node_namespace='x10',
                                     output='screen',
                                     parameters=[driver_config],
+                                    remappings=[('scan', '/scan')],
                                     )
     else:
         driver_node = LifecycleNode(package='lslidar_driver',
@@ -25,6 +26,7 @@ def generate_launch_description():
                                     name='lslidar_driver_node',
                                     namespace='x10',
                                     parameters=[driver_config],
+                                    remappings=[('scan', '/scan')],
                                     output='screen'
                                     )
 

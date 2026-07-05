@@ -63,6 +63,8 @@ services:
     environment:
       - ROS_DOMAIN_ID=55
       # - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp # 🌟 避坑修复：必须同步关闭，否则相机容器会因找不到 .so 动态库闪退！
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
     volumes:
       - /dev:/dev
     command: >
@@ -70,5 +72,5 @@ services:
       source /opt/ros/humble/setup.bash &&
       source /workspace/install/setup.bash &&
       echo '📸 Starting Orbbec Astra Depth Camera Node...' &&
-      ros2 launch orbbec_camera astra.launch.py
+      ros2 launch orbbec_camera astra.launch.py color_fps:=30 color_format:=UYVY depth_fps:=30
       "
