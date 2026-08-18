@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
     vim \
     emacs \
     build-essential \
+    ccache \
     ros-humble-xacro \
     ros-humble-foxglove-bridge \
     ros-humble-robot-state-publisher \
@@ -51,10 +52,40 @@ RUN apt-get install -y \
 COPY virtualgl.deb /tmp/virtualgl.deb
 
 # 2. Update package lists, install mesa-utils, install the local VirtualGL package, and clean up layers
-RUN apt-get install -y --no-install-recommends mesa-utils \
+RUN apt-get install -y --no-install-recommends mesa-utils python3-rosdep \
     && apt-get install -y /tmp/virtualgl.deb 
 
-RUN rm -rf /var/lib/apt/lists/* /tmp/virtualgl.deb
+# Let's keep the apt package list and in DEV env we may need to install extra package with rosdep
+# RUN rm -rf /var/lib/apt/lists/*
+RUN rm -f /tmp/virtualgl.deb
+
+########################################################################
+# CUDA support  etc.
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && \
+    rm cuda-keyring_1.1-1_all.deb
+
+RUN apt-get update && apt-get install -y cuda-toolkit-12-3 libnvinfer-dev libnvinfer-plugin-dev
+
+# of of CUDA stuff
+########################################################################
+
+# Initialize rosdep (Crucial for resolving future package dependencies)
+RUN rosdep init || true && rosdep update
+
+########################################################################
+# Autoware DEV Env: external init script for autoware if user try to do autoware DEV
+
+# Copy environment setup script into bin
+COPY setup-autoware-env.sh /usr/local/bin/setup-autoware-env
+RUN chmod +x /usr/local/bin/setup-autoware-env
+
+# Copy autoware build script
+COPY build-autoware.sh /usr/local/bin/build-autoware
+RUN chmod +x /usr/local/bin/build-autoware
+
+# End Autoware DEV
+########################################################################
 
 # 3. Fix the SSL certificate permission error
 RUN adduser xrdp ssl-cert
@@ -70,13 +101,12 @@ RUN echo "#!/bin/sh" > /etc/xrdp/startwm.sh \
 # 5. Set the root password
 RUN echo 'root:ros2dev' | chpasswd
 
-# 6. Initialize rosdep (Crucial for resolving future package dependencies)
-# RUN rosdep init || true \
-#     && rosdep update
-
 # 7. Expose the default RDP port, 8765 for Foxglove
 EXPOSE 3389
 EXPOSE 8765
+
+# Fix the 1003 group error as our /dev/dri/* use vlgusers with group 1003
+RUN groupadd -g 1003 vglusers || true
 
 # 8. Start the XRDP service and keep the container alive
 CMD ["/bin/bash", "-c", "mkdir -p /var/run/dbus && dbus-daemon --system && service xrdp start && tail -f /var/log/xrdp.log"]
