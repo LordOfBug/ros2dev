@@ -55,6 +55,9 @@ COPY virtualgl.deb /tmp/virtualgl.deb
 RUN apt-get install -y --no-install-recommends mesa-utils python3-rosdep \
     && apt-get install -y /tmp/virtualgl.deb 
 
+# add python3 venv 
+RUN apt-get install -y python3-venv python3.10-venv
+
 # Let's keep the apt package list and in DEV env we may need to install extra package with rosdep
 # RUN rm -rf /var/lib/apt/lists/*
 RUN rm -f /tmp/virtualgl.deb
@@ -65,7 +68,21 @@ RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86
     dpkg -i cuda-keyring_1.1-1_all.deb && \
     rm cuda-keyring_1.1-1_all.deb
 
-RUN apt-get update && apt-get install -y cuda-toolkit-12-3 libnvinfer-dev libnvinfer-plugin-dev
+# Pin TensorRT to the variant built for CUDA 12.x. The NVIDIA repo ships the
+# same TensorRT under multiple "+cuda<ver>" builds (e.g. 11.2.1.2-1+cuda12.9
+# and 11.2.1.2-1+cuda13.3) and defaults to the newest (cuda13.3). Mixing a
+# cuda13.3 TensorRT with the cuda-toolkit-12-9 below breaks linking, and
+# pinning libnvinfer-dev alone still lets apt pull cuda13.3 for its *deps*
+# (libnvinfer-headers-dev etc.), causing "held broken packages". The glob
+# pin makes apt prefer cuda12.9 for the whole libnvinfer* family.
+RUN mkdir -p /etc/apt/preferences.d \
+    && printf 'Package: libnvinfer*\nPin: version *+cuda12.9\nPin-Priority: 1001\n' \
+       > /etc/apt/preferences.d/pin-nvinfer
+
+RUN apt-get update && apt-get install -y \
+    cuda-toolkit-12-9 \
+    libnvinfer-dev \
+    libnvinfer-plugin-dev
 
 # of of CUDA stuff
 ########################################################################
