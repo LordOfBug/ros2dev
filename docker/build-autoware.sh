@@ -1,0 +1,170 @@
+#!/bin/bash
+
+# =============================================================================
+# build-autoware — build the Autoware source workspace mounted into this container.
+#
+# This container is a BASE image: the Autoware sources are managed on the HOST
+# (git + vcs import) and mounted in. This script performs the in-container
+# build steps from the official Autoware source-installation docs:
+#   1. source ROS 2
+#   2. setup-autoware-env  -> ensures acados is built + env vars exported
+#   3. patch broken tinyxml2_vendor CMake (upstream bug, see below)
+#   4. rosdep install      -> installs all ROS package dependencies
+#   5. colcon build        -> Release + symlink-install
+#
+# Usage:
+#   build-autoware [workspace-path] [extra colcon args...]
+#
+#   workspace-path   Autoware workspace root containing src/  (default: /opt/autoware)
+#   extra args       appended to the colcon build command, e.g.
+#                    build-autoware /opt/autoware --packages-up-to autoware_launch
+#
+# Env overrides:
+#   ROS_DISTRO  (default: humble)
+# =============================================================================
+
+set -euo pipefail
+
+ROS_DISTRO="${ROS_DISTRO:-humble}"
+
+AUTOWARE_WS="${1:-/opt/autoware}"
+if [ "$#" -gt 0 ]; then
+    shift
+fi
+
+# ---------------------------------------------------------------------------
+# 1. ROS 2 environment
+# ---------------------------------------------------------------------------
+# ROS 2 setup scripts (and setup-autoware-env) reference possibly-unset vars
+# such as AMENT_TRACE_SETUP_FILES / CMAKE_PREFIX_PATH and are NOT safe under
+# set -u. Disable nounset while sourcing, then restore it.
+set +u
+source "/opt/ros/$ROS_DISTRO/setup.bash"
+set -u
+echo "==> ROS 2 distro: $ROS_DISTRO"
+
+# ---------------------------------------------------------------------------
+# 2. Ensure acados is built and env vars are exported.
+#    Sourced (not executed) so the exported vars apply to this build shell.
+# ---------------------------------------------------------------------------
+set +u
+source /usr/local/bin/setup-autoware-env
+set -u
+
+# ---------------------------------------------------------------------------
+# 3. Apply a workaround for a broken tinyxml2_vendor CMake file
+# ---------------------------------------------------------------------------
+# WHY THIS IS NEEDED (found while debugging 11 failed Autoware packages):
+#
+# When building Autoware, `find_package(TinyXML2 QUIET)` is called by
+# fastrtps-config.cmake. That call is resolved by mrt_cmake_modules'
+# FindTinyXML2.cmake, which uses MIXED-CASE variables (TinyXML2_FOUND,
+# TinyXML2_LIBRARY) and NEVER sets the UPPERCASE TINYXML2_LIBRARY variable.
+#
+# Later, pluginlib's exported dependencies trigger `find_package(tinyxml2_vendor)`.
+# tinyxml2_vendorConfig.cmake includes tinyxml2_vendor-extras.cmake, which sees
+# `TinyXML2_FOUND AND NOT TARGET tinyxml2::tinyxml2` (TRUE, because the mrt
+# module found the library but created no imported target). It then reads
+# TINYXML2_LIBRARY -- which is EMPTY -- and dies with:
+#
+#   CMake Error: Unable to extract the library file path from
+#
+# Upstream fixed only the length==1 case (ros2/tinyxml2_vendor#23/#27); the
+# length==0 case (third-party Find module) is still broken upstream.
+#
+# This container is a BASE image with the Autoware sources mounted from the
+# HOST, so we must not touch /opt/autoware. Instead we patch the INSTALLED
+# vendor file (/opt/ros/humble/share/...) in place so the fix applies to every
+# package that pulls in tinyxml2_vendor. The patch is idempotent.
+TINYXML2_EXTRAS="/opt/ros/humble/share/tinyxml2_vendor/cmake/tinyxml2_vendor-extras.cmake"
+TINYXML2_PATCH_MARKER="mrt_cmake_modules"
+if [ -f "$TINYXML2_EXTRAS" ]; then
+    if grep -q "$TINYXML2_PATCH_MARKER" "$TINYXML2_EXTRAS"; then
+        echo "==> tinyxml2_vendor CMake fix already applied ($TINYXML2_EXTRAS)"
+    else
+        echo "==> Patching broken tinyxml2_vendor-extras.cmake (length-0 TINYXML2_LIBRARY fallback)..."
+        python3 - "$TINYXML2_EXTRAS" <<'PYEOF'
+import sys
+
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+old = """  if(${TINYXML_LIBRARY_LIST_LENGTH} EQUAL 1)
+    set(TINYXML2_LIBRARY_PATH ${TINYXML2_LIBRARY})
+  else()
+"""
+
+new = """  if(${TINYXML_LIBRARY_LIST_LENGTH} EQUAL 1)
+    set(TINYXML2_LIBRARY_PATH ${TINYXML2_LIBRARY})
+  elseif(${TINYXML_LIBRARY_LIST_LENGTH} EQUAL 0)
+    # TINYXML2_LIBRARY is empty when TinyXML2 was found via a third-party
+    # Find module (e.g. mrt_cmake_modules) that never set the uppercase
+    # variable. Fall back to find_library so the imported target can be created.
+    find_library(TINYXML2_LIBRARY_PATH NAMES tinyxml2)
+    if(NOT TINYXML2_LIBRARY_PATH)
+      message(FATAL_ERROR "Unable to locate tinyxml2 library")
+    endif()
+  else()
+"""
+
+if "mrt_cmake_modules" in content:
+    sys.exit(0)
+
+if old not in content:
+    sys.stderr.write("UNEXPECTED CONTENT in %s -- cannot patch automatically. Aborting build.\n" % path)
+    sys.exit(1)
+
+content = content.replace(old, new, 1)
+with open(path, "w") as f:
+    f.write(content)
+sys.exit(0)
+PYEOF
+        grep -q "$TINYXML2_PATCH_MARKER" "$TINYXML2_EXTRAS" || {
+            echo "[ERROR] tinyxml2_vendor patch verification failed." >&2
+            exit 1
+        }
+        echo "==> tinyxml2_vendor CMake fix applied."
+    fi
+else
+    echo "[WARN] $TINYXML2_EXTRAS not found -- skipping tinyxml2_vendor workaround."
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Workspace sanity check
+# ---------------------------------------------------------------------------
+if [ ! -d "$AUTOWARE_WS/src" ]; then
+    echo "[ERROR] Autoware workspace not found at $AUTOWARE_WS (no src/ directory)."
+    echo "        Make sure the host-synced Autoware sources are mounted there, e.g.:"
+    echo "          docker run -v /path/to/autoware:$AUTOWARE_WS ..."
+    exit 1
+fi
+cd "$AUTOWARE_WS"
+echo "==> Building Autoware workspace at: $AUTOWARE_WS"
+
+# ---------------------------------------------------------------------------
+# 5. Install ROS dependencies (rosdep)
+# ---------------------------------------------------------------------------
+rosdep update
+rosdep install -y --from-paths src --ignore-src --rosdistro "$ROS_DISTRO"
+
+# ---------------------------------------------------------------------------
+# 6. Build (Release, symlink-install; mirrors official Autoware docs)
+# ---------------------------------------------------------------------------
+echo "==> colcon build (this may take a long time)..."
+set +e
+colcon build \
+    --symlink-install \
+    --continue-on-error \
+    --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    "$@"
+BUILD_STATUS=$?
+set -e
+
+if [ "$BUILD_STATUS" -ne 0 ]; then
+    echo "==> [WARN] colcon build finished with errors (status $BUILD_STATUS). Inspect the log above."
+    exit "$BUILD_STATUS"
+fi
+
+echo "==> Autoware build succeeded! Source the workspace with:"
+echo "    source $AUTOWARE_WS/install/setup.bash"
