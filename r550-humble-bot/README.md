@@ -57,6 +57,11 @@ To keep the ROS 2 runtime environment on the Jetson Nano fully self-contained, `
 * **What it does**: Specifies the physical dimensions and coordinate frames of the R550 (e.g., distance from wheel centers to chassis origin, and position/rotation offset of the LiDAR and camera relative to the base center).
 * **Why we need it**: Generates the static transforms (`tf_static`) between `base_footprint`, `base_link`, `laser`, and `camera_link`. Without it, Nav2 cannot coordinate sensor positions relative to the wheels, leading to immediate transform errors.
 
+### 7. `ros2_astra_camera` (Branch: `master`)
+* **Purpose**: OpenNI2-based ROS 2 driver wrapper for Orbbec Astra series cameras.
+* **What it does**: Directly interfaces with the legacy Astra S (PID 0x0402) hardware using the OpenNI2 library, publishing color and depth streams.
+* **Why we need it**: The newer proprietary `OrbbecSDK_ROS2` has a known issue where it fails to start the color stream on legacy Astra devices (failing with `Match openni video mode failed!`). Using the OpenNI2-based stack provides reliable initialization and operation, mirroring the stable ROS 1 driver setup.
+
 ---
 
 ## Cross-Platform Build Workflow
@@ -186,6 +191,22 @@ ros2 topic list
 # Echo the scan data to verify N10 output
 ros2 topic echo /scan --limit 1
 ```
+
+### 5. Orbbec Astra S Integration Notes
+Legacy Astra S devices (such as PID `0x0402`) require specific configuration to work reliably under ROS 2:
+
+* **Driver Selection**: Always use `ros2_astra_camera` rather than the newer `OrbbecSDK_ROS2` or the pre-packaged `ros-humble-orbbec-camera` APT package. The proprietary SDK has a known internal bug that prevents negotiating video modes for the color stream.
+* **USB Permission Rules**: The camera requires mounting the raw USB bus via `volumes: - /dev/bus/usb:/dev/bus/usb` and executing in a `privileged: true` container context.
+* **Streaming Constraints**: The Astra S hardware cannot run the Color and Infrared (IR) streams simultaneously. If both are enabled, the driver will automatically disable the IR stream to allow the Color stream to start:
+  ```
+  [camera.camera]: Infrared and Color streams are enabled. Infrared stream will be disabled.
+  ```
+* **Verify Video Feed**:
+  Verify the active camera streams by listening to the image topics:
+  ```bash
+  ros2 topic hz /camera/color/image_raw
+  ros2 topic hz /camera/depth/image_raw
+  ```
 
 ---
 
