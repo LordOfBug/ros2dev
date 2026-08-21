@@ -1,0 +1,23 @@
+# r550_autoware_relay topic mappings
+#
+# robot_to_host: topics originating from the robot (via ros1_bridge) that should
+#                be republished for the remote Autoware host.
+#   Format: [[src_topic, dst_topic, msg_type], ...]
+#
+# host_to_robot: topics from the remote Autoware host that should be forwarded
+#                to the robot.
+#   Format: [[src_topic, dst_topic, msg_type], ...]
+
+r550_autoware_relay:
+  ros__parameters:
+    robot_to_host:
+      - ['/scan',              '/robot/scan',              'sensor_msgs/LaserScan']
+      - ['/odom',              '/robot/odom',              'nav_msgs/Odometry']
+      - ['/tf',                '/robot/tf',                'tf2_msgs/TFMessage']
+
+    host_to_robot:
+      - ['/autoware/velocity_control/cmd_vel', '/cmd_vel', 'geometry_msgs/Twist']
+
+    # Direct cmd_vel bridge (always active, even without config)
+    robot_cmd_vel: '/cmd_vel'
+    autoware_cmd_vel: '/autoware/velocity_control/cmd_vel'

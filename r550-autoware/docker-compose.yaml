@@ -1,0 +1,18 @@
+services:
+  # =========================================================================
+  # R550 Autoware Bridge + Relay
+  # Replaces the standalone r550-ros1-bridge container.
+  # Bridges ROS1 <-> ROS2 on the robot AND relays sensor/control topics
+  # to/from a remote Autoware host running on the dev machine.
+  # =========================================================================
+  r550_autoware:
+    image: r550-autoware:latest
+    container_name: r550_autoware
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    ipc: host
+    environment:
+      - ROS_DOMAIN_ID=55
+    volumes:
+      - /dev:/dev
